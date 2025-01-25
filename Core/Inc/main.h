@@ -61,12 +61,18 @@ void Error_Handler(void);
 /* Private defines -----------------------------------------------------------*/
 #define User_Button_Pin GPIO_PIN_13
 #define User_Button_GPIO_Port GPIOC
+#define tim3_out_Pin GPIO_PIN_6
+#define tim3_out_GPIO_Port GPIOA
 #define LED_Blue_Pin GPIO_PIN_6
 #define LED_Blue_GPIO_Port GPIOC
+#define tim1_out_Pin GPIO_PIN_8
+#define tim1_out_GPIO_Port GPIOA
 #define Out_1_Pin GPIO_PIN_6
 #define Out_1_GPIO_Port GPIOB
 #define Out_2_Pin GPIO_PIN_7
 #define Out_2_GPIO_Port GPIOB
+#define tim4_out_Pin GPIO_PIN_9
+#define tim4_out_GPIO_Port GPIOB
 
 /* USER CODE BEGIN Private defines */
 
