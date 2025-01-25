@@ -322,16 +322,16 @@ void set_new_speeds(int vFLrpm, int vFRrpm, int vRLrpm, int vRRrpm, whl_chnl *wh
         }
     }
 
-    ////////////    TIMER2 -  RL  ///////////////
-    if (vRLrpm == 0) {
+    ////////////    TIMER2 -  FR  ///////////////
+    if (vFRrpm == 0) {
         TIM2->CR1 &= ~((uint16_t)TIM_CR1_CEN);
     }
     else {
         TIM2->CR1 |= TIM_CR1_CEN;  // enable
                                    //
-        uint32_t current_32bit_period = calculete_period_only(vRLrpm);
+        uint32_t current_32bit_period = calculete_period_only(vFRrpm);
 
-        if (vRLrpm > whl_arr[numRL]->prev_speed) {
+        if (vFRrpm > whl_arr[numFR]->prev_speed) {
             TIM2->CR1 |= TIM_CR1_ARPE;
             TIM2->ARR = current_32bit_period;
 
@@ -358,8 +358,9 @@ void set_new_speeds(int vFLrpm, int vFRrpm, int vRLrpm, int vRRrpm, whl_chnl *wh
             TIM2->EGR |= TIM_EGR_UG;
         }
     }
-    whl_arr[numRL]->prev_speed = vRLrpm;
+    whl_arr[numFR]->prev_speed = vFRrpm;
 
+    
     ////////////    TIMER3 -  RL  ///////////////
 
     if (vRLrpm == 0) {
@@ -649,15 +650,13 @@ int main(void)
     HAL_TIM_Base_Start_IT(&htim2);
     HAL_TIM_Base_Start_IT(&htim3);
     HAL_TIM_Base_Start_IT(&htim4);
-    HAL_TIM_Base_Start_IT(&htim6);
-
-    HAL_TIM_OC_Start_IT(&htim1, TIM_CHANNEL_1);
-    HAL_TIM_OC_Start_IT(&htim2, TIM_CHANNEL_1);
-    HAL_TIM_OC_Start_IT(&htim3, TIM_CHANNEL_1);
-    HAL_TIM_OC_Start_IT(&htim4, TIM_CHANNEL_4);
-
     // timer6 (1Hz);
     HAL_TIM_Base_Start_IT(&htim6);
+
+    /* HAL_TIM_OC_Start_IT(&htim1, TIM_CHANNEL_1); */
+    HAL_TIM_OC_Start_IT(&htim2, TIM_CHANNEL_1);
+    /* HAL_TIM_OC_Start_IT(&htim3, TIM_CHANNEL_1); */
+    /* HAL_TIM_OC_Start_IT(&htim4, TIM_CHANNEL_4); */
 
 #ifdef DEBUG
     printf("[ INFO ] Program start now\n");
@@ -718,7 +717,7 @@ int main(void)
             vFLrpm = (uint8_t)canRX[0] << 8 | (uint8_t)canRX[1];
             vFRrpm = (uint8_t)canRX[2] << 8 | (uint8_t)canRX[3];
             vRLrpm = (uint8_t)canRX[4] << 8 | (uint8_t)canRX[5];
-            vRRrpm = (uint8_t)canRX[2] << 8 | (uint8_t)canRX[3];
+            vRRrpm = (uint8_t)canRX[6] << 8 | (uint8_t)canRX[7];
 
             /*my_printf("vFLrpm: %d vFRrpm: %d  vRLrpm: %d  vRRrpm: %d \n", vFLrpm, vFRrpm, vRLrpm,
              * vRRrpm);*/
