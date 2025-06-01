@@ -237,7 +237,7 @@ void set_new_speeds(int vFLrpm, int vFRrpm, int vRLrpm, int vRRrpm, whl_chnl *wh
 
     ////////////    TIMER1 -  FL  ///////////////
 
-    if (vFLrpm == 0) {
+    if (vFLrpm < 0x3F) {
         TIM1->CR1 &= ~((uint16_t)TIM_CR1_CEN);
     }
     else {
@@ -323,7 +323,7 @@ void set_new_speeds(int vFLrpm, int vFRrpm, int vRLrpm, int vRRrpm, whl_chnl *wh
     }
 
     ////////////    TIMER2 -  FR  ///////////////
-    if (vFRrpm == 0) {
+    if (vFRrpm < 0x3F) {
         TIM2->CR1 &= ~((uint16_t)TIM_CR1_CEN);
     }
     else {
@@ -363,7 +363,7 @@ void set_new_speeds(int vFLrpm, int vFRrpm, int vRLrpm, int vRRrpm, whl_chnl *wh
     
     ////////////    TIMER3 -  RL  ///////////////
 
-    if (vRLrpm == 0) {
+    if (vRLrpm < 0x3F) {
         TIM3->CR1 &= ~((uint16_t)TIM_CR1_CEN);
     }
     else {
@@ -450,7 +450,7 @@ void set_new_speeds(int vFLrpm, int vFRrpm, int vRLrpm, int vRRrpm, whl_chnl *wh
 
     ////////////    TIMER4 -  RR  ///////////////
 
-    if (vRRrpm == 0) {
+    if (vRRrpm < 0x3F) {
         TIM4->CR1 &= ~((uint16_t)TIM_CR1_CEN);
     }
     else {
