@@ -723,6 +723,8 @@ int main(void)
     
     set_new_speeds(0,0,0,0, whl_arr); // initialy - no output
 
+    HAL_GPIO_WritePin(GPIOA, EXT_LED_Pin, GPIO_PIN_SET);
+
     while (1) {
     /* USER CODE END WHILE */
 
@@ -762,7 +764,7 @@ int main(void)
 
 
             can_active_receiving = 1;    //LED logic
-            recievingcounger = 16;
+            recievingcounger = 4;
         }
     }
 
