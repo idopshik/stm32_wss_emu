@@ -1033,6 +1033,7 @@ void update_system_indicators(void)
 
 void handle_mode_led_indication(void)
 {
+    static uint32_t last_debug = 0;
     uint32_t interval_ms = 0;
     uint32_t current_time = HAL_GetTick();
     
@@ -1075,6 +1076,15 @@ void handle_mode_led_indication(void)
         default:
             interval_ms = 1000;
             break;
+    }
+    
+    // Отладочный вывод при смене интервала
+    static uint32_t last_interval = 0;
+    if(interval_ms != last_interval && (current_time - last_debug > 1000)) {
+        my_printf("[LED] Mode: %s, Interval: %lu ms\n", 
+                  get_mode_name(g_system_state.current_mode), interval_ms);
+        last_interval = interval_ms;
+        last_debug = current_time;
     }
     
     // Если интервал = 0 (режим выключен), выходим

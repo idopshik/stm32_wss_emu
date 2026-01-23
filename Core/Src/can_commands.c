@@ -5,6 +5,7 @@
 // Используем APB1_CLK из main.c
 #ifndef APB1_CLK
 #define APB1_CLK 150000000  // 150 МГц по умолчанию
+
 #endif
 
 
@@ -13,7 +14,7 @@ extern void my_printf(const char *fmt, ...);
 extern FDCAN_HandleTypeDef hfdcan1;  // Из main.c
 
 // Прототипы локальных функций
-void set_fixed_frequency_to_timers(uint32_t freq_hz, uint16_t psc, uint8_t channel_mask);
+void set_fixed_frequency_to_timers(uint32_t freq_hz, uint16_t psc, uint16_t arr, uint8_t channel_mask);
 void send_can_message(uint32_t id, uint8_t* data, uint8_t length);
 
 extern FDCAN_HandleTypeDef hfdcan1;  // Из main.c
@@ -66,6 +67,7 @@ void process_can_command(uint8_t* data)
             
             // Байты 6-7: PSC значение (если 0xFFFF - авто)
             uint16_t psc_value = ((uint16_t)data[7] << 8) | data[6];
+            uint16_t arr_value;
             
             my_printf("[CAN] Command: SET FIXED FREQ = %lu Hz, PSC = %u\n", 
                       freq_hz, psc_value);
@@ -74,27 +76,22 @@ void process_can_command(uint8_t* data)
             
             // Если PSC = 0xFFFF, используем авто-подбор
             if(psc_value == 0xFFFF) {
-                // Для 1000 Гц оптимальный PSC = 1499, ARR = 99
-                if(freq_hz == 1000) {
-                    psc_value = 1499;
-                } else {
-                    // Простой авто-подбор для других частот
-                    psc_value = (APB1_CLK / (freq_hz * 65536)) - 1;
-                    if(psc_value > 65535) psc_value = 65535;
-                    if(psc_value < 0) psc_value = 0;
-                }
+                calculate_optimal_psc_arr(freq_hz, &psc_value, &arr_value);
+            } else {
+                // Рассчитываем ARR для заданного PSC
+                arr_value = (APB1_CLK / (freq_hz * (psc_value + 1))) - 1;
+                if(arr_value > 65535) arr_value = 65535;
+                if(arr_value < 1) arr_value = 1;
             }
             
             // Устанавливаем фиксированную частоту
-            set_fixed_frequency_to_timers(freq_hz, psc_value, channel_mask);
+            set_fixed_frequency_to_timers(freq_hz, psc_value, arr_value, data[1]);
             
             // Сохраняем в глобальную структуру
             for(int i = 0; i < 4; i++) {
-                if(channel_mask & (1 << i)) {
+                if(data[1] & (1 << i)) {
                     g_system_state.psc_values[i] = psc_value;
-                    uint32_t arr = (APB1_CLK / (freq_hz * (psc_value + 1))) - 1;
-                    if(arr > 65535) arr = 65535;
-                    g_system_state.arr_values[i] = arr;
+                    g_system_state.arr_values[i] = arr_value;
                 }
             }
             
@@ -252,18 +249,18 @@ void send_can_message(uint32_t id, uint8_t* data, uint8_t length)
 // УСТАНОВКА ФИКСИРОВАННОЙ ЧАСТОТЫ НА ТАЙМЕРЫ
 // ============================================
 
-void set_fixed_frequency_to_timers(uint32_t freq_hz, uint16_t psc, uint8_t channel_mask)
+void set_fixed_frequency_to_timers(uint32_t freq_hz, uint16_t psc, uint16_t arr, uint8_t channel_mask)
 {
-    my_printf("[CAN] Setting fixed freq: %lu Hz, PSC=%u to channels: 0x%02X\n", 
-              freq_hz, psc, channel_mask);
+    my_printf("[CAN] Setting fixed freq: %lu Hz, PSC=%u, ARR=%u to channels: 0x%02X\n", 
+              freq_hz, psc, arr, channel_mask);
     
-    // Рассчитываем ARR для заданной частоты и PSC
-    // Формула: freq = APB1_CLK / ((PSC+1) * (ARR+1))
-    // => ARR = (APB1_CLK / (freq * (PSC+1))) - 1
-    uint32_t arr = (APB1_CLK / (freq_hz * (psc + 1))) - 1;
-    if(arr > 65535) arr = 65535;
+    // Рассчитываем фактическую частоту
+    uint32_t actual_freq = APB1_CLK / ((psc + 1) * (arr + 1));
+    int32_t error = (int32_t)(actual_freq - freq_hz);
+    float error_percent = (float)error * 100.0f / freq_hz;
     
-    my_printf("[CAN] Calculated ARR=%lu for PSC=%u\n", arr, psc);
+    my_printf("[CAN] Actual frequency: %lu Hz, Error: %ld Hz (%.3f%%)\n", 
+              actual_freq, error, error_percent);
     
     // Устанавливаем на активные таймеры
     for(int i = 0; i < 4; i++) {
@@ -298,7 +295,70 @@ void set_fixed_frequency_to_timers(uint32_t freq_hz, uint16_t psc, uint8_t chann
                     TIM4->CR1 |= TIM_CR1_CEN;
                     break;
             }
-            my_printf("[CAN] Timer %d set: PSC=%u, ARR=%lu\n", i+1, psc, arr);
+            my_printf("[CAN] Timer %d set: PSC=%u, ARR=%u, Freq=%lu Hz\n", 
+                      i+1, psc, arr, actual_freq);
         }
     }
+}
+
+
+// Функция для точного расчета PSC и ARR
+void calculate_optimal_psc_arr(uint32_t freq_hz, uint16_t *psc, uint16_t *arr)
+{
+    uint32_t best_error = 0xFFFFFFFF;
+    uint16_t best_psc = 0;
+    uint16_t best_arr = 0;
+    
+    if(freq_hz == 0) {
+        *psc = 0;
+        *arr = 65535;
+        return;
+    }
+    
+    // Максимальный делитель
+    uint32_t max_div = APB1_CLK / freq_hz;
+    
+    // Если делитель меньше 65536, используем PSC=0
+    if(max_div <= 65536) {
+        *psc = 0;
+        *arr = max_div - 1;
+        return;
+    }
+    
+    // Иначе ищем оптимальные PSC и ARR
+    for(uint16_t p = 1; p < 1000; p++) {  // Ограничим PSC до 1000 для скорости
+        uint32_t arr_candidate = max_div / (p + 1) - 1;
+        
+        if(arr_candidate > 65535) continue;
+        if(arr_candidate < 2) break;  // Слишком маленький ARR
+        
+        uint32_t actual_freq = APB1_CLK / ((p + 1) * (arr_candidate + 1));
+        uint32_t error = (actual_freq > freq_hz) ? (actual_freq - freq_hz) : (freq_hz - actual_freq);
+        
+        if(error < best_error) {
+            best_error = error;
+            best_psc = p;
+            best_arr = (uint16_t)arr_candidate;
+        }
+        
+        // Если нашли идеальное совпадение, выходим
+        if(error == 0) break;
+    }
+    
+    // Если не нашли, используем последние значения
+    if(best_psc == 0 && best_arr == 0) {
+        best_psc = (uint16_t)(max_div / 65536);
+        best_arr = 65535;
+    }
+    
+    *psc = best_psc;
+    *arr = best_arr;
+    
+    // Проверка расчета
+    uint32_t actual = APB1_CLK / ((*psc + 1) * (*arr + 1));
+    uint32_t error = (actual > freq_hz) ? (actual - freq_hz) : (freq_hz - actual);
+    float error_percent = (float)error * 100.0f / freq_hz;
+    
+    my_printf("[CALC] Target: %lu Hz, PSC=%u, ARR=%u, Actual: %lu Hz, Error: %lu Hz (%.3f%%)\n",
+              freq_hz, *psc, *arr, actual, error, error_percent);
 }

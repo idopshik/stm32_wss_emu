@@ -34,6 +34,7 @@ typedef enum {
 void process_can_command(uint8_t* data);
 void send_system_status(void);
 void send_error_response(uint8_t error_code);
-void set_fixed_frequency_to_timers(uint32_t freq_hz, uint16_t psc, uint8_t channel_mask);
+void calculate_optimal_psc_arr(uint32_t freq_hz, uint16_t *psc, uint16_t *arr);
+void set_fixed_frequency_to_timers(uint32_t freq_hz, uint16_t psc, uint16_t arr, uint8_t channel_mask);
 
 #endif // CAN_COMMANDS_H
