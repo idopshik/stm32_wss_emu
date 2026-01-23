@@ -29,6 +29,7 @@
 
 #include "system_modes.h"
 
+#include "can_commands.h"  // ДОБАВИТЬ ЭТУ СТРОЧКУ
 /* USER CODE END Includes */
 
 /* Private typedef -----------------------------------------------------------*/
@@ -142,9 +143,9 @@ int _write(int file, char *ptr, int len)
 void PrintArrayLen(uint8_t *data_arr, uint8_t data_length)
 {
     for (int i = 0; i < data_length; i++) {
-        printf("%#x ", data_arr[i]);
+        my_printf("%#x ", data_arr[i]);
     }
-    printf("\n");
+    my_printf("\n");
 }
 
 void PrintArray(uint8_t *data_arr)
@@ -155,10 +156,10 @@ void PrintArray(uint8_t *data_arr)
     if (denominator > 0) {
         debval = (sizeof(data_arr) / denominator);
         for (int i = 0; i < debval; i++) {
-            printf("%#x ", data_arr[i]);
+            my_printf("%#x ", data_arr[i]);
         }
     }
-    printf("\n");
+    my_printf("\n");
 }
 
 uint32_t calculete_period_only(int val)
@@ -322,13 +323,13 @@ void print_test(void)
 void print_timer_status(void) {
     if (ms100Flag_2) {
         ms100Flag_2 = 0;
-        printf("TIM1: PSC=%lu, ARR=%lu, CNT=%lu%s\n", 
+        my_printf("TIM1: PSC=%lu, ARR=%lu, CNT=%lu%s\n", 
                TIM1->PSC, TIM1->ARR, TIM1->CNT,
                whl_arr[numFL]->pending_update ? " [PENDING]" : "");
-        printf("TIM3: PSC=%lu, ARR=%lu, CNT=%lu%s\n", 
+        my_printf("TIM3: PSC=%lu, ARR=%lu, CNT=%lu%s\n", 
                TIM3->PSC, TIM3->ARR, TIM3->CNT,
                whl_arr[numRL]->pending_update ? " [PENDING]" : "");
-        printf("TIM4: PSC=%lu, ARR=%lu, CNT=%lu%s\n", 
+        my_printf("TIM4: PSC=%lu, ARR=%lu, CNT=%lu%s\n", 
                TIM4->PSC, TIM4->ARR, TIM4->CNT,
                whl_arr[numRR]->pending_update ? " [PENDING]" : "");
     }
@@ -350,7 +351,7 @@ void HAL_TIM_PeriodElapsedCallback(TIM_HandleTypeDef *htim)
             
             __HAL_TIM_DISABLE_IT(htim, TIM_IT_UPDATE);
             
-            printf("PSC seamless switch: TIM%c, PSC=%d, ARR=%d\n", 
+            my_printf("PSC seamless switch: TIM%c, PSC=%d, ARR=%d\n", 
                    '1' + i, whl_arr[i]->target_psc, whl_arr[i]->target_arr);
             break;
         }
@@ -415,37 +416,38 @@ int main(void)
     HAL_TIM_OC_Start_IT(&htim2, TIM_CHANNEL_1);
 
 #ifdef DEBUG
-    printf("[ INFO ] Program start now\n");
+    my_printf("[ INFO ] Program start now\n");
 #endif
 
     __HAL_TIM_ENABLE_IT(&htim1, TIM_IT_UPDATE);
     __HAL_TIM_ENABLE_IT(&htim3, TIM_IT_UPDATE);
     __HAL_TIM_ENABLE_IT(&htim4, TIM_IT_UPDATE);
 
-    printf("Seamless PSC switching enabled\n");
+    my_printf("Seamless PSC switching enabled\n");
+
 
 // Инициализация системы режимов
 system_init_modes();
 
-    // Инициализация системы режимов
-    system_init_modes();
+// Переходим в режим RPM (стандартный режим работы)
+system_switch_mode(MODE_RPM_DYNAMIC);
 
-    // Переходим в режим RPM (стандартный режим работы)
-    system_switch_mode(MODE_RPM_DYNAMIC);
+// Отправляем начальный статус
+send_system_status();
 
-    printf("\n========================================\n");
-    printf("SYSTEM STARTED SUCCESSFULLY\n");
-    printf("Current mode: %s\n", get_mode_name(g_system_state.current_mode));
-    printf("Waiting for CAN commands...\n");
-    printf("========================================\n\n");
+my_printf("\n========================================\n");
+my_printf("SYSTEM STARTED SUCCESSFULLY\n");
+my_printf("Current mode: %s\n", get_mode_name(g_system_state.current_mode));
+my_printf("Waiting for CAN commands...\n");
+my_printf("========================================\n\n");
 
-  /* USER CODE END 2 */
+/* USER CODE END 2 */
 
   /* Infinite loop */
   /* USER CODE BEGIN WHILE */
     int counter = 0;
 
-    printf("System ready - waiting for CAN data...\n");
+    my_printf("System ready - waiting for CAN data...\n");
 
 // Правильная инициализация структур
 whl_chnl fl_whl_s = {numFL, &htim1, 0, 24, 0, 0, 0, 0, 0, 0};
@@ -489,7 +491,7 @@ whl_chnl rr_whl_s = {numRR, &htim4, 0, 24, 0, 0, 0, 0, 0, 0};
                 vRLrpm = ((uint16_t)canRX[4] << 8) | canRX[5];
                 vRRrpm = ((uint16_t)canRX[6] << 8) | canRX[7];
                 
-                printf("RPM: FL=%d, FR=%d, RL=%d, RR=%d\n", 
+                my_printf("RPM: FL=%d, FR=%d, RL=%d, RR=%d\n", 
                        vFLrpm, vFRrpm, vRLrpm, vRRrpm);
                 
                 set_new_speeds(vFLrpm, vFRrpm, vRLrpm, vRRrpm, whl_arr);
@@ -498,7 +500,7 @@ whl_chnl rr_whl_s = {numRR, &htim4, 0, 24, 0, 0, 0, 0, 0, 0};
                 recievingcounger = 4;
             } else {
                 // В других режимах игнорируем RPM сообщения
-                printf("[INFO] Ignoring RPM data (not in RPM mode)\n");
+                my_printf("[INFO] Ignoring RPM data (not in RPM mode)\n");
             }
             
             // Обновляем время последней CAN команды
@@ -1119,13 +1121,13 @@ void check_system_health(void)
         uint32_t time_since_last_cmd = current_time - g_system_state.last_can_command_time;
         
         if(time_since_last_cmd > 10000) { // 10 секунд нет команд
-            printf("[WARNING] No CAN commands for %lu seconds\n", time_since_last_cmd / 1000);
+            my_printf("[WARNING] No CAN commands for %lu seconds\n", time_since_last_cmd / 1000);
             
             // Если в фиксированном режиме или ШИМ - это нормально
             // Если в аналоговом режиме - возможно, пропал сигнал
             if(g_system_state.current_mode == MODE_ANALOG_FOLLOW) {
                 g_system_state.analog_signal_present = 0;
-                printf("[WARNING] Analog signal lost?\n");
+                my_printf("[WARNING] Analog signal lost?\n");
             }
         }
     }
@@ -1175,11 +1177,23 @@ void HAL_FDCAN_RxFifo0Callback(FDCAN_HandleTypeDef *hfdcan, uint32_t RxFifo0ITs)
             Error_Handler();
         }
         else {
-            if ((RxHeader1.Identifier != CAN_SPECIAL_ID)) {
-                my_printf("wrongID: %#x \n\r", RxHeader1.Identifier);
+            my_printf("[CAN] Received ID: 0x%03X, DLC: %d\n", 
+                      RxHeader1.Identifier, RxHeader1.DataLength);
+            
+            if (RxHeader1.Identifier == 0x003) {
+                // RPM данные - обрабатываем только в RPM режиме
+                if(g_system_state.current_mode == MODE_RPM_DYNAMIC) {
+                    freshCanMsg = 1;
+                } else {
+                    my_printf("[CAN] Ignoring RPM data (not in RPM mode)\n");
+                }
+            }
+            else if (RxHeader1.Identifier == CAN_CMD_ID) {
+                // Командные сообщения - обрабатываем всегда
+                process_can_command(canRX);
             }
             else {
-                freshCanMsg = 1;
+                my_printf("[CAN] Unknown ID: 0x%03X\n", RxHeader1.Identifier);
             }
         }
     }
@@ -1211,7 +1225,7 @@ void Error_Handler(void)
 void assert_failed(uint8_t *file, uint32_t line)
 {
   /* USER CODE BEGIN 6 */
-    printf("Wrong parameters value: file %s on line %d\r\n", file, line);
+    my_printf("Wrong parameters value: file %s on line %d\r\n", file, line);
   /* USER CODE END 6 */
 }
 #endif /* USE_FULL_ASSERT */

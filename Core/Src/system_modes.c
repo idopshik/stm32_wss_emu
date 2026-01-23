@@ -24,6 +24,7 @@ const char* mode_names[] = {
 
 void system_init_modes(void)
 {
+    HAL_Delay(100);  // Ждем инициализации периферии
     printf("[SYSTEM] Initializing modes...\n");
     
     // Начальные значения
