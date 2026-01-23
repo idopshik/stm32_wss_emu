@@ -28,7 +28,9 @@
 #include <string.h>
 
 #include "system_modes.h"
-#include "can_commands.h"  // ДОБАВИТЬ ЭТУ СТРОЧКУ
+#include "can_commands.h"  
+#include "eeprom_handler.h"
+#include "analog_follower.h"
 
 /* USER CODE END Includes */
 
@@ -392,6 +394,16 @@ int main(void)
   HAL_Init();
   SystemClock_Config();
   MX_GPIO_Init();
+  MX_USART1_UART_Init();
+
+  my_printf("\n\n=== SYSTEM BOOT ===\n");
+
+  // Инициализация EEPROM и загрузка сохраненного состояния
+  eeprom_init();
+
+  // Инициализация аналогового режима (если используется)
+  analog_follower_init();
+
   MX_FDCAN1_Init();
   MX_TIM1_Init();
   MX_TIM2_Init();
@@ -399,7 +411,20 @@ int main(void)
   MX_TIM4_Init();
   MX_TIM6_Init();
   MX_TIM8_Init();
-  MX_USART1_UART_Init();
+
+    // Инициализация системы режимов
+    system_init_modes();
+
+   // Восстанавливаем состояние из EEPROM
+  eeprom_restore_state();
+
+    // Если EEPROM пустой, запускаем в RPM режиме
+    if(g_system_state.current_mode == MODE_BOOT) {
+        system_switch_mode(MODE_RPM_DYNAMIC);
+    }
+    
+    // Отправляем начальный статус
+    send_system_status();
 
   /* USER CODE BEGIN 2 */
     CANFD1_Set_Filtes();
@@ -424,20 +449,13 @@ int main(void)
     my_printf("Seamless PSC switching enabled\n");
 
 
-// Инициализация системы режимов
-system_init_modes();
 
-// Переходим в режим RPM (стандартный режим работы)
-system_switch_mode(MODE_RPM_DYNAMIC);
-
-// Отправляем начальный статус
-send_system_status();
-
-my_printf("\n========================================\n");
-my_printf("SYSTEM STARTED SUCCESSFULLY\n");
-my_printf("Current mode: %s\n", get_mode_name(g_system_state.current_mode));
-my_printf("Waiting for CAN commands...\n");
-my_printf("========================================\n\n");
+    
+    my_printf("\n========================================\n");
+    my_printf("SYSTEM STARTED SUCCESSFULLY\n");
+    my_printf("Current mode: %s\n", get_mode_name(g_system_state.current_mode));
+    my_printf("EEPROM: %s\n", g_system_state.eeprom_saved ? "LOADED" : "DEFAULT");
+    my_printf("========================================\n\n");
 
 /* USER CODE END 2 */
 
@@ -473,51 +491,62 @@ whl_chnl rr_whl_s = {numRR, &htim4, 0, 24, 0, 0, 0, 0, 0, 0};
     HAL_GPIO_WritePin(GPIOA, EXT_LED_Pin, GPIO_PIN_SET);
 
     /* USER CODE BEGIN WHILE */
-    while (1) {
-        // Существующая обработка CAN сообщений RPM
-        if (freshCanMsg == 1) {
-            freshCanMsg = 0;
+while (1) {
+    // Существующая обработка CAN сообщений RPM
+    if (freshCanMsg == 1) {
+        freshCanMsg = 0;
+        
+        // Обрабатываем RPM данные ТОЛЬКО если в RPM режиме
+        if(g_system_state.current_mode == MODE_RPM_DYNAMIC) {
+            HAL_GPIO_TogglePin(LED_Blue_GPIO_Port, LED_Blue_Pin);
             
-            // Обрабатываем RPM данные ТОЛЬКО если в RPM режиме
-            if(g_system_state.current_mode == MODE_RPM_DYNAMIC) {
-                HAL_GPIO_TogglePin(LED_Blue_GPIO_Port, LED_Blue_Pin);
-                
-                int vFLrpm, vFRrpm, vRLrpm, vRRrpm;
-                vFLrpm = ((uint16_t)canRX[0] << 8) | canRX[1];
-                vFRrpm = ((uint16_t)canRX[2] << 8) | canRX[3];
-                vRLrpm = ((uint16_t)canRX[4] << 8) | canRX[5];
-                vRRrpm = ((uint16_t)canRX[6] << 8) | canRX[7];
-                
-                my_printf("RPM: FL=%d, FR=%d, RL=%d, RR=%d\n", 
-                       vFLrpm, vFRrpm, vRLrpm, vRRrpm);
-                
-                set_new_speeds(vFLrpm, vFRrpm, vRLrpm, vRRrpm, whl_arr);
-                
-                can_active_receiving = 1;
-                recievingcounger = 4;
-            } else {
-                // В других режимах игнорируем RPM сообщения
-                my_printf("[INFO] Ignoring RPM data (not in RPM mode)\n");
-            }
+            int vFLrpm, vFRrpm, vRLrpm, vRRrpm;
+            vFLrpm = ((uint16_t)canRX[0] << 8) | canRX[1];
+            vFRrpm = ((uint16_t)canRX[2] << 8) | canRX[3];
+            vRLrpm = ((uint16_t)canRX[4] << 8) | canRX[5];
+            vRRrpm = ((uint16_t)canRX[6] << 8) | canRX[7];
             
-            // Обновляем время последней CAN команды
-            g_system_state.last_can_command_time = HAL_GetTick();
+            printf("RPM: FL=%d, FR=%d, RL=%d, RR=%d\n", 
+                   vFLrpm, vFRrpm, vRLrpm, vRRrpm);
+            
+            set_new_speeds(vFLrpm, vFRrpm, vRLrpm, vRRrpm, whl_arr);
+            
+            can_active_receiving = 1;
+            recievingcounger = 4;
+        } else {
+            // В других режимах игнорируем RPM сообщения
+            printf("[INFO] Ignoring RPM data (not in RPM mode)\n");
         }
         
-        // Обновление индикации (вызываем в основном цикле)
-        update_system_indicators();
-        
-        // Проверка здоровья системы
-        check_system_health();
-        
-        // Существующая обработка таймеров
-        if (ms100Flag > 0) {
-            ms100Flag = 0;
-            HAL_GPIO_TogglePin(GPIOB, Out_1_Pin);
-        }
-        
-        print_timer_status();
+        // Обновляем время последней CAN команды
+        g_system_state.last_can_command_time = HAL_GetTick();
     }
+    
+    // Обработка в зависимости от режима
+    switch(g_system_state.current_mode) {
+        case MODE_ANALOG_FOLLOW:
+            analog_follower_process();  // Обработка аналогового режима
+            break;
+            
+        default:
+            // Другие режимы не требуют обработки в основном цикле
+            break;
+    }
+    
+    // Обновление индикации
+    update_system_indicators();
+    
+    // Проверка здоровья системы
+    check_system_health();
+    
+    // Существующая обработка таймеров
+    if (ms100Flag > 0) {
+        ms100Flag = 0;
+        HAL_GPIO_TogglePin(GPIOB, Out_1_Pin);
+    }
+    
+    print_timer_status();
+}
     /* USER CODE END WHILE */
 }
 
@@ -1033,75 +1062,66 @@ void update_system_indicators(void)
 
 void handle_mode_led_indication(void)
 {
-    static uint32_t last_debug = 0;
     uint32_t interval_ms = 0;
     uint32_t current_time = HAL_GetTick();
     
-    // Определяем интервал мигания в зависимости от режима
+    // Определяем поведение LED в зависимости от режима
     switch(g_system_state.current_mode) {
         case MODE_BOOT:
-            interval_ms = 100;  // 5 Гц (быстрое)
+            interval_ms = 100;  // 5 Гц мигание при загрузке
             break;
             
         case MODE_RPM_DYNAMIC:
-            interval_ms = 250;  // 2 Гц (среднее)
-            break;
+            // В RPM режиме LED выключен
+            HAL_GPIO_WritePin(GPIOA, EXT_LED_Pin, GPIO_PIN_SET);
+            return;
             
         case MODE_FIXED_FREQUENCY:
-            interval_ms = 500;  // 1 Гц (медленное)
+            interval_ms = 500;  // 1 Гц мигание
             break;
             
         case MODE_PWM:
-            interval_ms = 1000; // 0.5 Гц (очень медленное)
+            interval_ms = 1000; // 0.5 Гц мигание
             break;
             
         case MODE_ANALOG_FOLLOW:
-            // В аналоговом режиме частота зависит от наличия сигнала
+            // В аналоговом режиме:
             if(g_system_state.analog_signal_present) {
-                interval_ms = 250;  // 2 Гц (сигнал есть)
+                interval_ms = 250;  // 2 Гц мигание (сигнал есть)
             } else {
-                interval_ms = 1000; // 0.5 Гц (сигнала нет)
+                // Постоянно горит (сигнала нет)
+                HAL_GPIO_WritePin(GPIOA, EXT_LED_Pin, GPIO_PIN_RESET);
+                return;
             }
             break;
             
         case MODE_DISABLED:
-            // LED постоянно выключен
+            // LED выключен
             HAL_GPIO_WritePin(GPIOA, EXT_LED_Pin, GPIO_PIN_SET);
             return;
             
         case MODE_ERROR:
-            interval_ms = 50;  // 10 Гц (очень быстрое)
+            interval_ms = 50;  // 10 Гц быстрое мигание
             break;
             
         default:
-            interval_ms = 1000;
-            break;
+            HAL_GPIO_WritePin(GPIOA, EXT_LED_Pin, GPIO_PIN_SET);
+            return;
     }
     
-    // Отладочный вывод при смене интервала
-    static uint32_t last_interval = 0;
-    if(interval_ms != last_interval && (current_time - last_debug > 1000)) {
-        my_printf("[LED] Mode: %s, Interval: %lu ms\n", 
-                  get_mode_name(g_system_state.current_mode), interval_ms);
-        last_interval = interval_ms;
-        last_debug = current_time;
-    }
-    
-    // Если интервал = 0 (режим выключен), выходим
-    if(interval_ms == 0) {
-        return;
-    }
-    
-    // Проверяем, нужно ли переключить LED
-    if(current_time - g_system_state.led_last_toggle_time >= interval_ms) {
-        g_system_state.led_state = !g_system_state.led_state;
-        g_system_state.led_last_toggle_time = current_time;
-        
-        // Управляем физическим LED
-        if(g_system_state.led_state) {
-            HAL_GPIO_WritePin(GPIOA, EXT_LED_Pin, GPIO_PIN_RESET); // ВКЛ
-        } else {
-            HAL_GPIO_WritePin(GPIOA, EXT_LED_Pin, GPIO_PIN_SET);   // ВЫКЛ
+    // Если определили интервал мигания
+    if(interval_ms > 0) {
+        // Проверяем, нужно ли переключить LED
+        if(current_time - g_system_state.led_last_toggle_time >= interval_ms) {
+            g_system_state.led_state = !g_system_state.led_state;
+            g_system_state.led_last_toggle_time = current_time;
+            
+            // Управляем физическим LED
+            if(g_system_state.led_state) {
+                HAL_GPIO_WritePin(GPIOA, EXT_LED_Pin, GPIO_PIN_RESET); // ВКЛ
+            } else {
+                HAL_GPIO_WritePin(GPIOA, EXT_LED_Pin, GPIO_PIN_SET);   // ВЫКЛ
+            }
         }
     }
 }

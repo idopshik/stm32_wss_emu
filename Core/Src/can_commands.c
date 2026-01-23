@@ -1,5 +1,6 @@
 #include "can_commands.h"
 #include "system_modes.h"
+#include "eeprom_handler.h"  // ДОБАВИТЬ ЭТУ СТРОКУ
 #include <string.h>
 
 // Используем APB1_CLK из main.c
@@ -139,16 +140,15 @@ void process_can_command(uint8_t* data)
         
         case CMD_SAVE_TO_EEPROM: {
             my_printf("[CAN] Command: SAVE TO EEPROM\n");
-            // TODO: Реализуем позже
-            my_printf("[CAN] EEPROM save not implemented yet\n");
-            g_system_state.eeprom_saved = 0;
+            eeprom_save_current_state();
+            g_system_state.eeprom_saved = 1;
             break;
         }
-        
+
         case CMD_FACTORY_RESET: {
             my_printf("[CAN] Command: FACTORY RESET\n");
-            // TODO: Реализуем позже
-            my_printf("[CAN] Factory reset not implemented yet\n");
+            eeprom_factory_reset();
+            g_system_state.eeprom_saved = 0;
             break;
         }
         
