@@ -7,6 +7,5 @@
 // Функции аналогового режима
 void analog_follower_init(void);
 void analog_follower_process(void);
-void check_analog_signal(void);
 
 #endif // ANALOG_FOLLOWER_H

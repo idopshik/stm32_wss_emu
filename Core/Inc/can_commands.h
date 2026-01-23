@@ -22,9 +22,7 @@ typedef enum {
     CMD_SET_FIXED_FREQ = 0x02,      // Установить фиксированную частоту
     CMD_SET_PWM_MODE = 0x03,        // Установить ШИМ режим
     CMD_SET_ANALOG_FOLLOW = 0x04,   // Режим следования аналоговому сигналу
-    CMD_SAVE_TO_EEPROM = 0x05,      // Сохранить текущий режим в EEPROM
-    CMD_FACTORY_RESET = 0x06,       // Сброс EEPROM к заводским настройкам
-    CMD_REQUEST_STATUS = 0x07       // Запросить статус системы
+    CMD_REQUEST_STATUS = 0x05       // Запросить статус системы
 } can_command_t;
 
 // ============================================

@@ -1,6 +1,5 @@
 #include "can_commands.h"
 #include "system_modes.h"
-#include "eeprom_handler.h"  // ДОБАВИТЬ ЭТУ СТРОКУ
 #include <string.h>
 
 // Используем APB1_CLK из main.c
@@ -138,20 +137,6 @@ void process_can_command(uint8_t* data)
             break;
         }
         
-        case CMD_SAVE_TO_EEPROM: {
-            my_printf("[CAN] Command: SAVE TO EEPROM\n");
-            eeprom_save_current_state();
-            g_system_state.eeprom_saved = 1;
-            break;
-        }
-
-        case CMD_FACTORY_RESET: {
-            my_printf("[CAN] Command: FACTORY RESET\n");
-            eeprom_factory_reset();
-            g_system_state.eeprom_saved = 0;
-            break;
-        }
-        
         case CMD_REQUEST_STATUS: {
             my_printf("[CAN] Command: REQUEST STATUS\n");
             send_system_status();
@@ -173,6 +158,7 @@ void process_can_command(uint8_t* data)
 // ОТПРАВКА СТАТУСА СИСТЕМЫ (ID 0x006)
 // ============================================
 
+// В can_commands.c - функция send_system_status
 void send_system_status(void)
 {
     uint8_t status_data[8] = {0};
@@ -183,20 +169,20 @@ void send_system_status(void)
     // Байт 1: Маска активных каналов
     status_data[1] = g_system_state.channel_mask;
     
-    // Байты 2-3: Частота TIM1 / 10 Гц (uint16_t)
+    // Байты 2-3: Частота / 10 Гц (если установлена)
     if(g_system_state.target_frequency_hz > 0) {
         uint16_t freq_x10 = (uint16_t)(g_system_state.target_frequency_hz / 10);
         status_data[2] = freq_x10 & 0xFF;
         status_data[3] = (freq_x10 >> 8) & 0xFF;
     }
     
-    // Байты 4-5: Частота TIM2 / 10 Гц (пока такая же)
-    status_data[4] = status_data[2];
-    status_data[5] = status_data[3];
+    // Байты 4-5: Скважность ШИМ (если режим PWM)
+    if(g_system_state.current_mode == MODE_PWM) {
+        status_data[4] = g_system_state.pwm_duty_percent;
+    }
     
-    // Байты 6-7: Доп. информация
-    status_data[6] = g_system_state.pwm_duty_percent;
-    status_data[7] = g_system_state.analog_signal_present;
+    // Байты 6-7: Наличие аналогового сигнала
+    status_data[6] = g_system_state.analog_signal_present;
     
     // Отправляем CAN сообщение
     send_can_message(CAN_STATUS_ID, status_data, 8);

@@ -33,7 +33,8 @@ typedef struct {
     
     // Флаги состояния
     uint8_t analog_signal_present; // 1 = аналоговый сигнал есть
-    uint8_t eeprom_saved;          // 1 = состояние сохранено в EEPROM
+    
+    // Для отслеживания активности
     uint32_t last_can_command_time; // Время последней CAN команды
     
     // Для индикации

@@ -24,7 +24,6 @@ const char* mode_names[] = {
 
 void system_init_modes(void)
 {
-    HAL_Delay(100);  // Ждем инициализации периферии
     printf("[SYSTEM] Initializing modes...\n");
     
     // Начальные значения
@@ -33,15 +32,14 @@ void system_init_modes(void)
     g_system_state.target_frequency_hz = 0;
     g_system_state.pwm_duty_percent = 50;
     
-    // Инициализация таймеров значениями по умолчанию
+    // Инициализация таймеров значений
     for(int i = 0; i < 4; i++) {
-        g_system_state.psc_values[i] = 24;  // Значение из существующего кода
+        g_system_state.psc_values[i] = 24;
         g_system_state.arr_values[i] = 59999;
     }
     
     g_system_state.analog_signal_present = 0;
-    g_system_state.eeprom_saved = 0;
-    g_system_state.last_can_command_time = HAL_GetTick();
+    g_system_state.last_can_command_time = HAL_GetTick(); // ДОБАВИТЬ
     
     g_system_state.led_last_toggle_time = 0;
     g_system_state.led_state = 0;
@@ -188,7 +186,6 @@ void system_print_status(void)
     
     printf("Last CAN cmd: %lu ms ago\n", 
            HAL_GetTick() - g_system_state.last_can_command_time);
-    printf("EEPROM saved: %s\n", g_system_state.eeprom_saved ? "YES" : "NO");
     printf("===================\n");
 }
 

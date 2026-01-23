@@ -29,7 +29,6 @@
 
 #include "system_modes.h"
 #include "can_commands.h"  
-#include "eeprom_handler.h"
 #include "analog_follower.h"
 
 /* USER CODE END Includes */
@@ -397,9 +396,7 @@ int main(void)
   MX_USART1_UART_Init();
 
   my_printf("\n\n=== SYSTEM BOOT ===\n");
-
-  // Инициализация EEPROM и загрузка сохраненного состояния
-  eeprom_init();
+    my_printf("STM32G431 - No EEPROM support\n");
 
   // Инициализация аналогового режима (если используется)
   analog_follower_init();
@@ -415,16 +412,12 @@ int main(void)
     // Инициализация системы режимов
     system_init_modes();
 
-   // Восстанавливаем состояние из EEPROM
-  eeprom_restore_state();
-
-    // Если EEPROM пустой, запускаем в RPM режиме
-    if(g_system_state.current_mode == MODE_BOOT) {
-        system_switch_mode(MODE_RPM_DYNAMIC);
-    }
+    // Всегда запускаем в RPM режиме (без восстановления из EEPROM)
+    system_switch_mode(MODE_RPM_DYNAMIC);
     
     // Отправляем начальный статус
     send_system_status();
+    
 
   /* USER CODE BEGIN 2 */
     CANFD1_Set_Filtes();
@@ -454,9 +447,9 @@ int main(void)
     my_printf("\n========================================\n");
     my_printf("SYSTEM STARTED SUCCESSFULLY\n");
     my_printf("Current mode: %s\n", get_mode_name(g_system_state.current_mode));
-    my_printf("EEPROM: %s\n", g_system_state.eeprom_saved ? "LOADED" : "DEFAULT");
+    my_printf("No EEPROM - all settings volatile\n");
     my_printf("========================================\n\n");
-
+    
 /* USER CODE END 2 */
 
   /* Infinite loop */
@@ -518,7 +511,7 @@ while (1) {
             printf("[INFO] Ignoring RPM data (not in RPM mode)\n");
         }
         
-        // Обновляем время последней CAN команды
+        // Обновляем время последней CAN команды (ДОБАВИТЬ ЭТО)
         g_system_state.last_can_command_time = HAL_GetTick();
     }
     
@@ -1147,13 +1140,13 @@ void check_system_health(void)
         uint32_t time_since_last_cmd = current_time - g_system_state.last_can_command_time;
         
         if(time_since_last_cmd > 10000) { // 10 секунд нет команд
-            my_printf("[WARNING] No CAN commands for %lu seconds\n", time_since_last_cmd / 1000);
+            printf("[WARNING] No CAN commands for %lu seconds\n", time_since_last_cmd / 1000);
             
             // Если в фиксированном режиме или ШИМ - это нормально
             // Если в аналоговом режиме - возможно, пропал сигнал
             if(g_system_state.current_mode == MODE_ANALOG_FOLLOW) {
                 g_system_state.analog_signal_present = 0;
-                my_printf("[WARNING] Analog signal lost?\n");
+                printf("[WARNING] Analog signal lost?\n");
             }
         }
     }
