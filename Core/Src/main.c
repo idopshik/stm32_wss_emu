@@ -28,8 +28,8 @@
 #include <string.h>
 
 #include "system_modes.h"
-
 #include "can_commands.h"  // ДОБАВИТЬ ЭТУ СТРОЧКУ
+
 /* USER CODE END Includes */
 
 /* Private typedef -----------------------------------------------------------*/
@@ -181,15 +181,9 @@ int calculete_prsc_and_perio(int val, int *arr, whl_chnl *whl_arr[], int wheelnu
         newpresc = 24;
     }
 
-    // Исправляем обращение к initial_tmp_flag
-    if (whl_arr[wheelnum]->initial_tmp_flag == 0) {
-        whl_arr[wheelnum]->initial_tmp_flag = 1;
-        arr[0] = 24;
-    }
-    else {
-        arr[0] = whl_arr[wheelnum]->prev_psc;
-    }
-    whl_arr[wheelnum]->prev_psc = newpresc;
+    // ВАЖНО: arr[0] - текущий PSC, arr[1] - новый PSC
+    arr[0] = whl_arr[wheelnum]->prev_psc;
+    arr[1] = newpresc;  // ДОБАВИТЬ ЭТУ СТРОЧКУ!
 
     uint32_t tmp;
     tmp = (APB1_CLK / (val * factor * MinutTeethFactor * (arr[0] + 1))) - 1;
@@ -197,7 +191,7 @@ int calculete_prsc_and_perio(int val, int *arr, whl_chnl *whl_arr[], int wheelnu
         tmp = 65535;
     }
     arr[2] = (int)tmp;
-    
+
     if (arr[0] != arr[1]) {
         tmp = ((APB1_CLK / (val * factor * MinutTeethFactor * (newpresc + 1))) - 1);
         if (tmp > 65536) {
@@ -209,10 +203,14 @@ int calculete_prsc_and_perio(int val, int *arr, whl_chnl *whl_arr[], int wheelnu
         arr[3] = arr[2];
     }
 
+    // Сохраняем новый PSC
+    whl_arr[wheelnum]->prev_psc = newpresc;
+
     return 0;
 }
 
-void update_wheel_seamless(TIM_TypeDef* TIMx, int rpm, whl_chnl* wheel) {
+void update_wheel_seamless(TIM_TypeDef* TIMx, int rpm, whl_chnl* wheel)
+{
     if (rpm < 0x3F) {
         TIMx->CR1 &= ~TIM_CR1_CEN;
         wheel->pending_update = 0;
@@ -445,7 +443,6 @@ my_printf("========================================\n\n");
 
   /* Infinite loop */
   /* USER CODE BEGIN WHILE */
-    int counter = 0;
 
     my_printf("System ready - waiting for CAN data...\n");
 
@@ -537,7 +534,6 @@ whl_chnl rr_whl_s = {numRR, &htim4, 0, 24, 0, 0, 0, 0, 0, 0};
   */
 static void MX_FDCAN1_Init(void)
 {
-
   /* USER CODE BEGIN FDCAN1_Init 0 */
 
   /* USER CODE END FDCAN1_Init 0 */
@@ -560,7 +556,7 @@ static void MX_FDCAN1_Init(void)
   hfdcan1.Init.DataSyncJumpWidth = 7;
   hfdcan1.Init.DataTimeSeg1 = 7;
   hfdcan1.Init.DataTimeSeg2 = 8;
-  hfdcan1.Init.StdFiltersNbr = 1;
+  hfdcan1.Init.StdFiltersNbr = 2;        // ИЗМЕНИТЬ С 1 НА 2!
   hfdcan1.Init.ExtFiltersNbr = 0;
   hfdcan1.Init.TxFifoQueueMode = FDCAN_TX_FIFO_OPERATION;
   if (HAL_FDCAN_Init(&hfdcan1) != HAL_OK)
@@ -1144,30 +1140,63 @@ static void CANFD1_Set_Filtes(void)
 {
     FDCAN_FilterTypeDef sFilterConfig;
 
+    // ============================================
+    // ФИЛЬТР 1: ID 0x003 (RPM данные)
+    // ============================================
     sFilterConfig.IdType = FDCAN_STANDARD_ID;
     sFilterConfig.FilterIndex = 0;
     sFilterConfig.FilterType = FDCAN_FILTER_MASK;
     sFilterConfig.FilterConfig = FDCAN_FILTER_TO_RXFIFO0;
-    sFilterConfig.FilterID1 = CAN_SPECIAL_ID;
-    sFilterConfig.FilterID2 = 0x07FF;
+    sFilterConfig.FilterID1 = 0x003;        // ID для RPM данных
+    sFilterConfig.FilterID2 = 0x07FF;       // Маска: все биты проверяются
+    
     if (HAL_FDCAN_ConfigFilter(&hfdcan1, &sFilterConfig) != HAL_OK) {
         Error_Handler();
     }
     else {
-        my_printf("filterOK\n\r");
+        my_printf("Filter 0: ID 0x003 (RPM data)\n\r");
     }
 
-    if (HAL_FDCAN_ConfigGlobalFilter(&hfdcan1, FDCAN_REJECT, FDCAN_REJECT, FDCAN_FILTER_REMOTE, FDCAN_FILTER_REMOTE) != HAL_OK) {
-        Error_Handler();
-    }
-
-    if (HAL_FDCAN_ActivateNotification(&hfdcan1, FDCAN_IT_RX_FIFO0_NEW_MESSAGE, 0) != HAL_OK) {
-        Error_Handler();
-    }
+    // ============================================
+    // ФИЛЬТР 2: ID 0x004 (команды)
+    // ============================================
+    sFilterConfig.FilterIndex = 1;
+    sFilterConfig.FilterType = FDCAN_FILTER_MASK;
+    sFilterConfig.FilterConfig = FDCAN_FILTER_TO_RXFIFO0;
+    sFilterConfig.FilterID1 = 0x004;        // ID для команд
+    sFilterConfig.FilterID2 = 0x07FF;       // Маска: все биты проверяются
     
+    if (HAL_FDCAN_ConfigFilter(&hfdcan1, &sFilterConfig) != HAL_OK) {
+        Error_Handler();
+    }
+    else {
+        my_printf("Filter 1: ID 0x004 (commands)\n\r");
+    }
+
+    // ============================================
+    // ГЛОБАЛЬНЫЙ ФИЛЬТР
+    // ============================================
+    if (HAL_FDCAN_ConfigGlobalFilter(&hfdcan1, 
+        FDCAN_REJECT,      // Отклонять стандартные ID, не прошедшие фильтр
+        FDCAN_REJECT,      // Отклонять расширенные ID
+        FDCAN_FILTER_REMOTE, 
+        FDCAN_FILTER_REMOTE) != HAL_OK) {
+        Error_Handler();
+    }
+
+    // ============================================
+    // АКТИВАЦИЯ ПРЕРЫВАНИЙ
+    // ============================================
+    if (HAL_FDCAN_ActivateNotification(&hfdcan1, 
+        FDCAN_IT_RX_FIFO0_NEW_MESSAGE, 0) != HAL_OK) {
+        Error_Handler();
+    }
+
     if (HAL_FDCAN_Start(&hfdcan1) != HAL_OK) {
         Error_Handler();
     }
+    
+    my_printf("CAN filters configured for IDs: 0x003, 0x004\n\r");
 }
 
 void HAL_FDCAN_RxFifo0Callback(FDCAN_HandleTypeDef *hfdcan, uint32_t RxFifo0ITs)
@@ -1177,23 +1206,30 @@ void HAL_FDCAN_RxFifo0Callback(FDCAN_HandleTypeDef *hfdcan, uint32_t RxFifo0ITs)
             Error_Handler();
         }
         else {
-            my_printf("[CAN] Received ID: 0x%03X, DLC: %d\n", 
+            // ОТЛАДОЧНЫЙ ВЫВОД
+            my_printf("[CAN] RX: ID=0x%03X, DLC=%d, Data: ", 
                       RxHeader1.Identifier, RxHeader1.DataLength);
+            for(int i = 0; i < RxHeader1.DataLength; i++) {
+                my_printf("%02X ", canRX[i]);
+            }
+            my_printf("\n");
             
             if (RxHeader1.Identifier == 0x003) {
                 // RPM данные - обрабатываем только в RPM режиме
                 if(g_system_state.current_mode == MODE_RPM_DYNAMIC) {
                     freshCanMsg = 1;
+                    my_printf("[CAN] RPM data accepted (in RPM mode)\n");
                 } else {
-                    my_printf("[CAN] Ignoring RPM data (not in RPM mode)\n");
+                    my_printf("[CAN] RPM data IGNORED (not in RPM mode)\n");
                 }
             }
-            else if (RxHeader1.Identifier == CAN_CMD_ID) {
+            else if (RxHeader1.Identifier == CAN_CMD_ID) { // 0x004
                 // Командные сообщения - обрабатываем всегда
+                my_printf("[CAN] Command received\n");
                 process_can_command(canRX);
             }
             else {
-                my_printf("[CAN] Unknown ID: 0x%03X\n", RxHeader1.Identifier);
+                my_printf("[CAN] UNKNOWN ID: 0x%03X\n", RxHeader1.Identifier);
             }
         }
     }

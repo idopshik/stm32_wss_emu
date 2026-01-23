@@ -2,6 +2,20 @@
 #include "system_modes.h"
 #include <string.h>
 
+// Используем APB1_CLK из main.c
+#ifndef APB1_CLK
+#define APB1_CLK 150000000  // 150 МГц по умолчанию
+#endif
+
+
+extern void my_printf(const char *fmt, ...);
+
+extern FDCAN_HandleTypeDef hfdcan1;  // Из main.c
+
+// Прототипы локальных функций
+void set_fixed_frequency_to_timers(uint32_t freq_hz, uint16_t psc, uint8_t channel_mask);
+void send_can_message(uint32_t id, uint8_t* data, uint8_t length);
+
 extern FDCAN_HandleTypeDef hfdcan1;  // Из main.c
 
 // ============================================
@@ -58,11 +72,33 @@ void process_can_command(uint8_t* data)
             
             g_system_state.target_frequency_hz = freq_hz;
             
-            if(channel_mask == 0xFF) {
-                set_all_channels_active(1);
+            // Если PSC = 0xFFFF, используем авто-подбор
+            if(psc_value == 0xFFFF) {
+                // Для 1000 Гц оптимальный PSC = 1499, ARR = 99
+                if(freq_hz == 1000) {
+                    psc_value = 1499;
+                } else {
+                    // Простой авто-подбор для других частот
+                    psc_value = (APB1_CLK / (freq_hz * 65536)) - 1;
+                    if(psc_value > 65535) psc_value = 65535;
+                    if(psc_value < 0) psc_value = 0;
+                }
             }
             
-            // TODO: Здесь позже установим частоту на таймеры
+            // Устанавливаем фиксированную частоту
+            set_fixed_frequency_to_timers(freq_hz, psc_value, channel_mask);
+            
+            // Сохраняем в глобальную структуру
+            for(int i = 0; i < 4; i++) {
+                if(channel_mask & (1 << i)) {
+                    g_system_state.psc_values[i] = psc_value;
+                    uint32_t arr = (APB1_CLK / (freq_hz * (psc_value + 1))) - 1;
+                    if(arr > 65535) arr = 65535;
+                    g_system_state.arr_values[i] = arr;
+                }
+            }
+            
+            // Переключаем режим
             system_switch_mode(MODE_FIXED_FREQUENCY);
             
             my_printf("[CAN] Fixed frequency mode activated\n");
@@ -209,5 +245,60 @@ void send_can_message(uint32_t id, uint8_t* data, uint8_t length)
     
     if(HAL_FDCAN_AddMessageToTxFifoQ(&hfdcan1, &TxHeader, data) != HAL_OK) {
         my_printf("[CAN] ERROR: Failed to send message ID 0x%03X\n", id);
+    }
+}
+
+// ============================================
+// УСТАНОВКА ФИКСИРОВАННОЙ ЧАСТОТЫ НА ТАЙМЕРЫ
+// ============================================
+
+void set_fixed_frequency_to_timers(uint32_t freq_hz, uint16_t psc, uint8_t channel_mask)
+{
+    my_printf("[CAN] Setting fixed freq: %lu Hz, PSC=%u to channels: 0x%02X\n", 
+              freq_hz, psc, channel_mask);
+    
+    // Рассчитываем ARR для заданной частоты и PSC
+    // Формула: freq = APB1_CLK / ((PSC+1) * (ARR+1))
+    // => ARR = (APB1_CLK / (freq * (PSC+1))) - 1
+    uint32_t arr = (APB1_CLK / (freq_hz * (psc + 1))) - 1;
+    if(arr > 65535) arr = 65535;
+    
+    my_printf("[CAN] Calculated ARR=%lu for PSC=%u\n", arr, psc);
+    
+    // Устанавливаем на активные таймеры
+    for(int i = 0; i < 4; i++) {
+        if(channel_mask & (1 << i)) {
+            switch(i) {
+                case 0: // TIM1
+                    TIM1->CR1 &= ~TIM_CR1_CEN;
+                    TIM1->PSC = psc;
+                    TIM1->ARR = arr;
+                    TIM1->CNT = 0;
+                    TIM1->CR1 |= TIM_CR1_CEN;
+                    break;
+                case 1: // TIM2
+                    TIM2->CR1 &= ~TIM_CR1_CEN;
+                    TIM2->PSC = psc;
+                    TIM2->ARR = arr;
+                    TIM2->CNT = 0;
+                    TIM2->CR1 |= TIM_CR1_CEN;
+                    break;
+                case 2: // TIM3
+                    TIM3->CR1 &= ~TIM_CR1_CEN;
+                    TIM3->PSC = psc;
+                    TIM3->ARR = arr;
+                    TIM3->CNT = 0;
+                    TIM3->CR1 |= TIM_CR1_CEN;
+                    break;
+                case 3: // TIM4
+                    TIM4->CR1 &= ~TIM_CR1_CEN;
+                    TIM4->PSC = psc;
+                    TIM4->ARR = arr;
+                    TIM4->CNT = 0;
+                    TIM4->CR1 |= TIM_CR1_CEN;
+                    break;
+            }
+            my_printf("[CAN] Timer %d set: PSC=%u, ARR=%lu\n", i+1, psc, arr);
+        }
     }
 }
