@@ -1058,10 +1058,10 @@ void handle_mode_led_indication(void)
     uint32_t interval_ms = 0;
     uint32_t current_time = HAL_GetTick();
     
-    // Определяем поведение LED в зависимости от режима
+    // Определяем интервал мигания в зависимости от режима
     switch(g_system_state.current_mode) {
         case MODE_BOOT:
-            interval_ms = 100;  // 5 Гц мигание при загрузке
+            interval_ms = 100;  // 5 Гц (быстрое)
             break;
             
         case MODE_RPM_DYNAMIC:
@@ -1084,6 +1084,13 @@ void handle_mode_led_indication(void)
             } else {
                 // Постоянно горит (сигнала нет)
                 HAL_GPIO_WritePin(GPIOA, EXT_LED_Pin, GPIO_PIN_RESET);
+                
+                // Выводим сообщение раз в 5 секунд
+                static uint32_t last_msg = 0;
+                if(current_time - last_msg > 5000) {
+                    last_msg = current_time;
+                    my_printf("[LED] Analog mode: NO SIGNAL, LED ON\n");
+                }
                 return;
             }
             break;
@@ -1104,6 +1111,14 @@ void handle_mode_led_indication(void)
     
     // Если определили интервал мигания
     if(interval_ms > 0) {
+        // Выводим сообщение при смене интервала
+        static uint32_t last_interval = 0;
+        if(interval_ms != last_interval) {
+            last_interval = interval_ms;
+            my_printf("[LED] Mode: %s, Blink interval: %lu ms\n", 
+                     get_mode_name(g_system_state.current_mode), interval_ms);
+        }
+        
         // Проверяем, нужно ли переключить LED
         if(current_time - g_system_state.led_last_toggle_time >= interval_ms) {
             g_system_state.led_state = !g_system_state.led_state;

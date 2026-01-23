@@ -102,31 +102,56 @@ void process_can_command(uint8_t* data)
             break;
         }
         
-        case CMD_SET_PWM_MODE: {
-            // Байты 2-5: частота в Гц
-            uint32_t freq_hz = ((uint32_t)data[5] << 24) |
-                               ((uint32_t)data[4] << 16) |
-                               ((uint32_t)data[3] << 8) |
-                               data[2];
+    case CMD_SET_PWM_MODE: {
+        // Байты 2-5: частота в Гц
+        uint32_t freq_hz = ((uint32_t)data[5] << 24) |
+                           ((uint32_t)data[4] << 16) |
+                           ((uint32_t)data[3] << 8) |
+                           data[2];
+        
+        // Байты 6-7: скважность 0-100% (uint16_t)
+        uint16_t duty = ((uint16_t)data[7] << 8) | data[6];
+        
+        my_printf("[CAN] Command: SET PWM = %lu Hz, Duty = %u%%\n", 
+                  freq_hz, duty);
+        
+        if(duty > 100) duty = 100;
+        
+        g_system_state.target_frequency_hz = freq_hz;
+        g_system_state.pwm_duty_percent = (uint8_t)duty;
+        
+        // Устанавливаем на таймеры (пока только на TIM2, который у нас в режиме OC)
+        // Для других таймеров нужно настраивать ШИМ
+        if(freq_hz > 0) {
+            // Рассчитываем PSC и ARR
+            uint32_t psc = 1499;  // Для 100 Гц
+            uint32_t arr = 99;    // Для 100 Гц
             
-            // Байты 6-7: скважность 0-100% (uint16_t)
-            uint16_t duty = ((uint16_t)data[7] << 8) | data[6];
-            
-            my_printf("[CAN] Command: SET PWM = %lu Hz, Duty = %u%%\n", 
-                      freq_hz, duty);
-            
-            if(duty > 100) duty = 100;
-            
-            g_system_state.target_frequency_hz = freq_hz;
-            g_system_state.pwm_duty_percent = (uint8_t)duty;
-            
-            if(channel_mask == 0xFF) {
-                set_all_channels_active(1);
+            if(freq_hz == 1000) {
+                psc = 1499;
+                arr = 99;
             }
+            // Можно добавить расчет для других частот
             
-            system_switch_mode(MODE_PWM);
-            break;
+            // Устанавливаем на TIM2 (он у нас в режиме Output Compare)
+            TIM2->CR1 &= ~TIM_CR1_CEN;
+            TIM2->PSC = psc;
+            TIM2->ARR = arr;
+            TIM2->CCR1 = (arr * duty) / 100;  // Устанавливаем скважность
+            TIM2->CNT = 0;
+            TIM2->CR1 |= TIM_CR1_CEN;
+            
+            my_printf("[CAN] PWM set on TIM2: PSC=%lu, ARR=%lu, CCR1=%lu\n", 
+                      psc, arr, TIM2->CCR1);
         }
+        
+        if(channel_mask == 0xFF) {
+            set_all_channels_active(1);
+        }
+        
+        system_switch_mode(MODE_PWM);
+        break;
+    }
         
         case CMD_SET_ANALOG_FOLLOW: {
             my_printf("[CAN] Command: SET ANALOG FOLLOW MODE\n");

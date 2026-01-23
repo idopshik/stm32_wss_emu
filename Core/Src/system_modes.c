@@ -57,14 +57,14 @@ void system_switch_mode(operation_mode_t new_mode)
     operation_mode_t old_mode = g_system_state.current_mode;
     
     // Проверка валидности режима
-    if(new_mode > MODE_DISABLED && new_mode != MODE_ERROR) {
-        printf("[ERROR] Invalid mode: %d\n", new_mode);
+    if(old_mode == new_mode) {
+        my_printf("[SYSTEM] Already in mode: %s\n", get_mode_name(new_mode));
         return;
     }
     
-    printf("[SYSTEM] Switching mode: %s -> %s\n", 
-           get_mode_name(old_mode), 
-           get_mode_name(new_mode));
+    my_printf("\n[SYSTEM] Switching mode: %s -> %s\n", 
+              get_mode_name(old_mode), 
+              get_mode_name(new_mode));
     
     // Действия при выходе из старого режима
     switch(old_mode) {
