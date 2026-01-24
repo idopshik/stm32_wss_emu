@@ -1250,7 +1250,7 @@ void process_can_in_main(void)
 {
     // 1. Обработка принятых сообщений
     if (can_rx_pending) {
-        can_rx_pending = 0;  // Сбросить флаг
+        can_rx_pending = 0;
         
         if (can_rx_msg.id == 0x003) {
             // RPM данные
@@ -1260,12 +1260,17 @@ void process_can_in_main(void)
             }
         }
         else if (can_rx_msg.id == CAN_CMD_ID) {
-            // Команды - передаем в обработчик
             process_can_command(can_rx_msg.data);
         }
     }
     
-    // 2. Отправка статуса по запросу
+    // 2. Обработка отложенного Hi-Z (в main loop, не в прерывании!)
+    if (g_system_state.pending_hi_z) {
+        g_system_state.pending_hi_z = 0;
+        enter_hi_impedance_mode();
+    }
+    
+    // 3. Отправка статуса по запросу
     if (can_tx_status_pending) {
         if (HAL_FDCAN_GetTxFifoFreeLevel(&hfdcan1) > 0) {
             can_tx_status_pending = 0;
@@ -1273,7 +1278,7 @@ void process_can_in_main(void)
         }
     }
     
-    // 3. Отправка ошибок
+    // 4. Отправка ошибок
     if (can_tx_error_pending) {
         if (HAL_FDCAN_GetTxFifoFreeLevel(&hfdcan1) > 0) {
             can_tx_error_pending = 0;

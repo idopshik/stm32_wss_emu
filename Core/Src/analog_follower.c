@@ -209,16 +209,27 @@ void enter_high_frequency_mode(void)
 {
     high_freq_mode = 1;
     
-    // Отключаем ВСЕ прерывания кроме TIM8 CC
-    __disable_irq();
+    // ============================================
+    // КРИТИЧНО: НЕ используем __disable_irq()!
+    // ============================================
+    // Отключаем только НИЗКОПРИОРИТЕТНЫЕ прерывания
+    // FDCAN (prio 0) и TIM8 (prio 5) ОСТАЮТСЯ АКТИВНЫМИ
     
-    // Включаем только TIM8_CC
-    NVIC_EnableIRQ(TIM8_CC_IRQn);
+    // Отключаем UART (prio 10) - тормозит
+    HAL_NVIC_DisableIRQ(USART1_IRQn);
     
-    __enable_irq();
+    // Отключаем таймеры вывода (prio 10)
+    HAL_NVIC_DisableIRQ(TIM1_UP_TIM16_IRQn);
+    HAL_NVIC_DisableIRQ(TIM3_IRQn);
+    HAL_NVIC_DisableIRQ(TIM4_IRQn);
     
-    // Выводим сообщение только один раз
-    my_printf("[ANALOG] HIGH FREQ MODE (>500kHz): interrupts disabled\n");
+    // Отключаем TIM6 (системный, prio 6)
+    HAL_NVIC_DisableIRQ(TIM6_DAC_IRQn);
+    
+    // FDCAN (prio 0) и TIM8_CC (prio 5) РАБОТАЮТ!
+    
+    my_printf("[ANALOG] HIGH FREQ MODE (>500kHz): low-priority IRQs disabled\n");
+    my_printf("[ANALOG] FDCAN and TIM8 remain active\n");
 }
 
 // ============================================
@@ -229,10 +240,14 @@ void exit_high_frequency_mode(void)
 {
     high_freq_mode = 0;
     
-    // Восстанавливаем нормальные прерывания
-    __enable_irq();
+    // Восстанавливаем все прерывания
+    HAL_NVIC_EnableIRQ(USART1_IRQn);
+    HAL_NVIC_EnableIRQ(TIM1_UP_TIM16_IRQn);
+    HAL_NVIC_EnableIRQ(TIM3_IRQn);
+    HAL_NVIC_EnableIRQ(TIM4_IRQn);
+    HAL_NVIC_EnableIRQ(TIM6_DAC_IRQn);
     
-    my_printf("[ANALOG] Normal mode (<500kHz): interrupts enabled\n");
+    my_printf("[ANALOG] Normal mode (<500kHz): all interrupts enabled\n");
 }
 
 // ============================================

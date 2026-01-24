@@ -13,10 +13,16 @@
 #include "system_modes.h"
 #include <stdint.h>
 
+// Уровни дебага
+#define DEBUG_CAN_TX    0  // 0 = выключено, 1 = включено
+#define DEBUG_CAN_ERROR 0  // 0 = выключено, 1 = включено
+                           //
 // ============================================
 // CAN ID
 // ============================================
 
+#define DEBUG_CAN_COMMANDS 0  // 0 = выключено, 1 = включено
+                              //
 #define CAN_CMD_ID 0x004      // Командные сообщения
 #define CAN_STATUS_ID 0x006   // Ответы статуса
                               

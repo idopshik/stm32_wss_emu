@@ -35,6 +35,7 @@ typedef enum {
 typedef struct {
     // Текущее состояние
     operation_mode_t current_mode;
+    uint8_t pending_hi_z;  // Флаг для отложенного перехода в Hi-Z
     uint8_t channel_mask;          // Биты: 0=TIM1, 1=TIM2, 2=TIM3, 3=TIM4
     uint32_t target_frequency_hz;  // Целевая частота (для режимов 2,3)
     uint16_t psc_values[4];        // PSC для каждого таймера [0]=TIM1...

@@ -1,12 +1,3 @@
-/**
- * system_modes.c - VERSION 2
- * 
- * Добавлено:
- * - MODE_HI_IMPEDANCE
- * - boot_time для uptime
- * - hi_impedance_active флаг
- */
-
 #include "system_modes.h"
 #include "analog_follower.h"
 #include <stdio.h>
@@ -29,6 +20,8 @@ const char* mode_names[] = {
 void system_init_modes(void)
 {
     my_printf("[SYSTEM] Initializing modes...\n");
+
+    g_system_state.pending_hi_z = 0;
     
     g_system_state.current_mode = MODE_BOOT;
     g_system_state.channel_mask = 0x0F;
