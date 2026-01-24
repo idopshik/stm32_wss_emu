@@ -19,6 +19,23 @@
 
 #define CAN_CMD_ID 0x004      // Командные сообщения
 #define CAN_STATUS_ID 0x006   // Ответы статуса
+                              
+// Команды
+#define CMD_STOP_ALL 0x00
+#define CMD_RPM_MODE 0x01
+#define CMD_FIXED_FREQ 0x02
+#define CMD_ANALOG_FOLLOW 0x03
+#define CMD_STATUS_REQUEST 0x07
+
+// Объявления CAN переменных из main.c
+extern volatile uint8_t can_tx_status_pending;
+extern volatile uint8_t can_tx_error_pending;
+extern uint8_t can_tx_error_code;
+
+// Прототипы функций
+void process_can_command(uint8_t* data);
+void send_system_status(void);
+void send_error_response(uint8_t error_code);
 
 // ============================================
 // КОДЫ КОМАНД (Байт 0)

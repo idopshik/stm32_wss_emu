@@ -9,6 +9,7 @@
 #include "can_commands.h"
 #include "system_modes.h"
 #include <string.h>
+#include <stdio.h>
 
 #ifndef APB1_CLK
 #define APB1_CLK 150000000
@@ -24,167 +25,77 @@ void send_can_message(uint32_t id, uint8_t* data, uint8_t length);
 // ОБРАБОТКА КОМАНД - С HI-Z
 // ============================================
 
-void process_can_command(uint8_t* data)
+void process_can_command(uint8_t *data)
 {
-    if(data == NULL) return;
+    uint8_t cmd = data[0];
     
-    uint8_t command = data[0];
-    uint8_t channel_mask = data[1];
+    my_printf("\n[CAN] Command received: 0x%02X\n", cmd);
     
-    switch(command) {
-        case CMD_DISABLE_OUTPUT: {
-            if(channel_mask == 0xFF) {
-                set_all_channels_active(0);
-            } else {
-                for(int i = 0; i < 4; i++) {
-                    if(channel_mask & (1 << i)) {
-                        set_channel_active(i, 0);
-                    }
-                }
-            }
-            
-            // Если были в Hi-Z - выходим
-            if(g_system_state.hi_impedance_active) {
-                exit_hi_impedance_mode();
-            }
-            
+    switch(cmd) {
+        case CMD_STOP_ALL:  // 0x00
+            my_printf("[CAN] CMD_STOP_ALL\n");
             system_switch_mode(MODE_DISABLED);
+            send_system_status();
             break;
-        }
-        
-        case CMD_SET_RPM_MODE: {
-            // Выход из Hi-Z если нужно
-            if(g_system_state.hi_impedance_active) {
-                exit_hi_impedance_mode();
-            }
             
-            if(channel_mask == 0xFF) {
-                set_all_channels_active(1);
-            }
+        case CMD_RPM_MODE:  // 0x01
+            my_printf("[CAN] CMD_RPM_MODE\n");
             system_switch_mode(MODE_RPM_DYNAMIC);
+            send_system_status();
             break;
-        }
-        
-        case CMD_SET_FIXED_FREQ: {
-            // Выход из Hi-Z если нужно
-            if(g_system_state.hi_impedance_active) {
-                exit_hi_impedance_mode();
-            }
             
-            // Байты 2-5: частота в Гц (little-endian)
-            uint32_t freq_hz = ((uint32_t)data[5] << 24) |
-                               ((uint32_t)data[4] << 16) |
-                               ((uint32_t)data[3] << 8) |
-                               data[2];
+        case CMD_FIXED_FREQ:  // 0x02
+        {
+            // Формат: [0]=0x02, [1..4]=freq (LE), [5..6]=PSC (LE) или 0xFFFF
+            uint32_t target_freq = (uint32_t)data[1] | 
+                                  ((uint32_t)data[2] << 8) |
+                                  ((uint32_t)data[3] << 16) |
+                                  ((uint32_t)data[4] << 24);
             
-            // Байты 6-7: PSC значение (0xFFFF = авто)
-            uint16_t psc_value = ((uint16_t)data[7] << 8) | data[6];
-            uint16_t arr_value;
+            uint16_t psc_value = (uint16_t)data[5] | ((uint16_t)data[6] << 8);
             
-            my_printf("\n[FIXED_FREQ] Target: %lu Hz, PSC: %u\n", 
-                      freq_hz, psc_value);
+            my_printf("[CAN] CMD_FIXED_FREQ: %lu Hz, PSC=0x%04X\n", 
+                     target_freq, psc_value);
             
-            g_system_state.target_frequency_hz = freq_hz;
+            // Сохраняем в состояние
+            g_system_state.target_frequency_hz = target_freq;
             
+            // Если PSC = 0xFFFF - автоматический выбор
             if(psc_value == 0xFFFF) {
-                calculate_optimal_psc_arr(freq_hz, &psc_value, &arr_value);
+                my_printf("[CAN] PSC: AUTO\n");
+                // TODO: Расчёт PSC/ARR
             } else {
-                arr_value = (APB1_CLK / (freq_hz * (psc_value + 1))) - 1;
-                if(arr_value > 65535) arr_value = 65535;
-                if(arr_value < 1) arr_value = 1;
-            }
-            
-            set_fixed_frequency_to_timers(freq_hz, psc_value, arr_value, channel_mask);
-            
-            for(int i = 0; i < 4; i++) {
-                if(channel_mask & (1 << i)) {
+                // Используем заданный PSC
+                for(int i = 0; i < 4; i++) {
                     g_system_state.psc_values[i] = psc_value;
-                    g_system_state.arr_values[i] = arr_value;
                 }
             }
             
+            // Переключаемся в режим
             system_switch_mode(MODE_FIXED_FREQUENCY);
-            my_printf("[FIXED_FREQ] Mode activated\n\n");
-            break;
-        }
-        
-        case CMD_SET_PWM_MODE: {
-            // Выход из Hi-Z если нужно
-            if(g_system_state.hi_impedance_active) {
-                exit_hi_impedance_mode();
-            }
             
-            uint32_t freq_hz = ((uint32_t)data[5] << 24) |
-                               ((uint32_t)data[4] << 16) |
-                               ((uint32_t)data[3] << 8) |
-                               data[2];
+            // TODO: Применить частоту к таймерам
             
-            uint16_t duty = ((uint16_t)data[7] << 8) | data[6];
-            
-            my_printf("[PWM] Freq: %lu Hz, Duty: %u%%\n", freq_hz, duty);
-            
-            if(duty > 100) duty = 100;
-            
-            g_system_state.target_frequency_hz = freq_hz;
-            g_system_state.pwm_duty_percent = (uint8_t)duty;
-            
-            if(freq_hz > 0) {
-                uint16_t psc, arr;
-                calculate_optimal_psc_arr(freq_hz, &psc, &arr);
-                
-                TIM2->CR1 &= ~TIM_CR1_CEN;
-                TIM2->PSC = psc;
-                TIM2->ARR = arr;
-                TIM2->CCR1 = (arr * duty) / 100;
-                TIM2->CNT = 0;
-                TIM2->CR1 |= TIM_CR1_CEN;
-                
-                my_printf("[PWM] TIM2: PSC=%u, ARR=%u, CCR1=%lu\n", 
-                          psc, arr, TIM2->CCR1);
-            }
-            
-            if(channel_mask == 0xFF) {
-                set_all_channels_active(1);
-            }
-            
-            system_switch_mode(MODE_PWM);
-            break;
-        }
-        
-        case CMD_SET_ANALOG_FOLLOW: {
-            // Выход из Hi-Z если нужно
-            if(g_system_state.hi_impedance_active) {
-                exit_hi_impedance_mode();
-            }
-            
-            my_printf("[ANALOG] Switching to analog follow mode\n");
-            if(channel_mask == 0xFF) {
-                set_all_channels_active(1);
-            }
-            system_switch_mode(MODE_ANALOG_FOLLOW);
-            break;
-        }
-        
-        case CMD_SET_HI_IMPEDANCE: {
-            my_printf("[HI-Z] Entering Hi-Z mode\n");
-            enter_hi_impedance_mode();
-            break;
-        }
-        
-        case CMD_REQUEST_STATUS: {
-            my_printf("[STATUS] Status requested\n");
             send_system_status();
             break;
         }
         
-        default: {
-            my_printf("[CAN] ERROR: Unknown command: 0x%02X\n", command);
-            send_error_response(0x01);
+        case CMD_ANALOG_FOLLOW:  // 0x03
+            my_printf("[CAN] CMD_ANALOG_FOLLOW\n");
+            system_switch_mode(MODE_ANALOG_FOLLOW);
+            send_system_status();
             break;
-        }
+            
+        case CMD_STATUS_REQUEST:  // 0x07
+            my_printf("[CAN] CMD_STATUS_REQUEST\n");
+            send_system_status();
+            break;
+            
+        default:
+            my_printf("[CAN] Unknown command: 0x%02X\n", cmd);
+            send_error_response(0x01);  // Неизвестная команда
+            break;
     }
-    
-    g_system_state.last_can_command_time = HAL_GetTick();
 }
 
 // ============================================
@@ -252,11 +163,11 @@ void exit_hi_impedance_mode(void)
     GPIO_InitStruct.Speed = GPIO_SPEED_FREQ_LOW;
     
     // Для STM32G431 нужно использовать правильные AF значения:
-    // PA8 (TIM1_CH1) - AF6 (не AF1!)
+    // PA8 (TIM1_CH1) - AF2
     GPIO_InitStruct.Pin = GPIO_PIN_8;
-    GPIO_InitStruct.Alternate = GPIO_AF6_TIM1;  // Исправлено с AF1 на AF6
+    GPIO_InitStruct.Alternate = GPIO_AF2_TIM1;  // Исправлено с AF6 на AF2
     HAL_GPIO_Init(GPIOA, &GPIO_InitStruct);
-    my_printf("[HI-Z] PA8 → AF6 (TIM1_CH1)\n");
+    my_printf("[HI-Z] PA8 → AF2 (TIM1_CH1)\n");  // Исправь комментарий тоже!
     
     // PA5 (TIM2_CH1) - AF1
     GPIO_InitStruct.Pin = GPIO_PIN_5;
@@ -275,6 +186,45 @@ void exit_hi_impedance_mode(void)
     GPIO_InitStruct.Alternate = GPIO_AF2_TIM4;
     HAL_GPIO_Init(GPIOB, &GPIO_InitStruct);
     my_printf("[HI-Z] PB6 → AF2 (TIM4_CH1)\n");
+    
+    // ВОССТАНАВЛИВАЕМ ТАЙМЕРЫ!
+    if(g_system_state.current_mode == MODE_FIXED_FREQUENCY) {
+        // Восстанавливаем частоту
+        for(int i = 0; i < 4; i++) {
+            if(g_system_state.channel_mask & (1 << i)) {
+                // Получаем сохраненные значения
+                uint16_t psc = g_system_state.psc_values[i];
+                uint16_t arr = g_system_state.arr_values[i];
+                
+                // Применяем к соответствующему таймеру
+                TIM_TypeDef* TIMx = NULL;
+                switch(i) {
+                    case 0: TIMx = TIM1; break;
+                    case 1: TIMx = TIM2; break;
+                    case 2: TIMx = TIM3; break;
+                    case 3: TIMx = TIM4; break;
+                }
+                
+                if(TIMx != NULL) {
+                    TIMx->CR1 &= ~TIM_CR1_CEN;
+                    TIMx->PSC = psc;
+                    TIMx->ARR = arr;
+                    TIMx->CNT = 0;
+                    TIMx->CR1 |= TIM_CR1_CEN;
+                    
+                    my_printf("[HI-Z] TIM%d restored: PSC=%u, ARR=%u\n", 
+                              i+1, psc, arr);
+                }
+            }
+        }
+    } else if(g_system_state.current_mode == MODE_RPM_DYNAMIC) {
+        // Перезапускаем таймеры
+        TIM1->CR1 |= TIM_CR1_CEN;
+        TIM2->CR1 |= TIM_CR1_CEN;
+        TIM3->CR1 |= TIM_CR1_CEN;
+        TIM4->CR1 |= TIM_CR1_CEN;
+        my_printf("[HI-Z] RPM mode: all timers restarted\n");
+    }
     
     g_system_state.hi_impedance_active = 0;
     
@@ -361,7 +311,7 @@ void send_error_response(uint8_t error_code)
 
 void send_can_message(uint32_t id, uint8_t* data, uint8_t length)
 {
-    FDCAN_TxHeaderTypeDef TxHeader;
+    FDCAN_TxHeaderTypeDef TxHeader = {0};
     
     TxHeader.Identifier = id;
     TxHeader.IdType = FDCAN_STANDARD_ID;
@@ -373,8 +323,15 @@ void send_can_message(uint32_t id, uint8_t* data, uint8_t length)
     TxHeader.TxEventFifoControl = FDCAN_NO_TX_EVENTS;
     TxHeader.MessageMarker = 0;
     
+    // Проверить доступность TX FIFO (на всякий случай)
+    if(HAL_FDCAN_GetTxFifoFreeLevel(&hfdcan1) == 0) {
+        my_printf("[CAN] WARNING: TX FIFO full!\n");
+        // Можно добавить ожидание или буферизацию
+        return;
+    }
+    
     if(HAL_FDCAN_AddMessageToTxFifoQ(&hfdcan1, &TxHeader, data) != HAL_OK) {
-        my_printf("[CAN] TX ERROR: Failed to send ID 0x%03X\n", id);
+        my_printf("[CAN] TX ERROR: ID 0x%03X\n", id);
     }
 }
 

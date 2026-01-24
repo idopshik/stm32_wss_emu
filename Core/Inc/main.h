@@ -36,6 +36,24 @@ extern "C" {
 
 /* Exported types ------------------------------------------------------------*/
 /* USER CODE BEGIN ET */
+    //
+// ===== CAN RX =====
+typedef struct {
+    uint32_t id;
+    uint8_t  dlc;
+    uint8_t  data[8];
+} can_msg_t;
+
+extern volatile uint8_t can_rx_pending;
+extern can_msg_t can_rx_msg;
+
+// ===== CAN TX =====
+extern volatile uint8_t can_tx_status_pending;
+extern volatile uint8_t can_tx_error_pending;
+extern uint8_t can_tx_error_code;
+
+// Прототипы функций
+void process_can_in_main(void);
 
 /* USER CODE END ET */
 
