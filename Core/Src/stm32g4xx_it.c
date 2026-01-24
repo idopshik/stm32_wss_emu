@@ -22,6 +22,8 @@
 #include "stm32g4xx_it.h"
 /* Private includes ----------------------------------------------------------*/
 /* USER CODE BEGIN Includes */
+
+#include "analog_follower.h"
 /* USER CODE END Includes */
 
 /* Private typedef -----------------------------------------------------------*/
@@ -306,13 +308,23 @@ void TIM8_TRG_COM_IRQHandler(void)
   */
 void TIM8_CC_IRQHandler(void)
 {
-  /* USER CODE BEGIN TIM8_CC_IRQn 0 */
-
-  /* USER CODE END TIM8_CC_IRQn 0 */
-  HAL_TIM_IRQHandler(&htim8);
-  /* USER CODE BEGIN TIM8_CC_IRQn 1 */
-
-  /* USER CODE END TIM8_CC_IRQn 1 */
+    /* USER CODE BEGIN TIM8_CC_IRQn 0 */
+    
+    // Проверяем флаг захвата канала 1
+    if(TIM8->SR & TIM_SR_CC1IF) {
+        // Сбрасываем флаг
+        TIM8->SR &= ~TIM_SR_CC1IF;
+        
+        // Вызываем обработчик
+        analog_follower_capture_callback();
+    }
+    
+    /* USER CODE END TIM8_CC_IRQn 0 */
+    /* HAL обработка если нужна */
+    HAL_TIM_IRQHandler(&htim8);
+    /* USER CODE BEGIN TIM8_CC_IRQn 1 */
+    
+    /* USER CODE END TIM8_CC_IRQn 1 */
 }
 
 /**
