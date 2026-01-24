@@ -19,7 +19,9 @@ const char* mode_names[] = {
 
 void system_init_modes(void)
 {
+    #if DEBUG_SYSTEM
     my_printf("[SYSTEM] Initializing modes...\n");
+    #endif
 
     g_system_state.pending_hi_z = 0;
     
@@ -36,12 +38,14 @@ void system_init_modes(void)
     g_system_state.analog_signal_present = 0;
     g_system_state.hi_impedance_active = 0;
     g_system_state.last_can_command_time = HAL_GetTick();
-    g_system_state.boot_time = HAL_GetTick();  // Запоминаем время загрузки
+    g_system_state.boot_time = HAL_GetTick();
     g_system_state.led_last_toggle_time = 0;
     g_system_state.led_state = 0;
     
+    #if DEBUG_SYSTEM
     my_printf("[SYSTEM] Initialized. Mode: %s\n", 
              get_mode_name(g_system_state.current_mode));
+    #endif
 }
 
 void system_switch_mode(operation_mode_t new_mode)
@@ -49,22 +53,26 @@ void system_switch_mode(operation_mode_t new_mode)
     operation_mode_t old_mode = g_system_state.current_mode;
     
     if(old_mode == new_mode) {
+        #if DEBUG_SYSTEM
         my_printf("[SYSTEM] Already in mode: %s\n", get_mode_name(new_mode));
+        #endif
         return;
     }
     
+    #if DEBUG_SYSTEM
     my_printf("\n[SYSTEM] Mode transition: %s -> %s\n", 
               get_mode_name(old_mode), 
               get_mode_name(new_mode));
+    #endif
     
     // ============================================
     // ДЕЙСТВИЯ ПРИ ВЫХОДЕ ИЗ СТАРОГО РЕЖИМА
     // ============================================
     
+    #if DEBUG_SYSTEM
     switch(old_mode) {
         case MODE_ANALOG_FOLLOW:
             my_printf("[SYSTEM] Stopping analog follower...\n");
-            analog_follower_stop();
             break;
             
         case MODE_HI_IMPEDANCE:
@@ -80,6 +88,18 @@ void system_switch_mode(operation_mode_t new_mode)
             break;
             
         default:
+            // Для остальных режимов ничего не выводим
+            break;
+    }
+    #endif
+    
+    switch(old_mode) {
+        case MODE_ANALOG_FOLLOW:
+            analog_follower_stop();
+            break;
+            
+        default:
+            // Для остальных режимов ничего не делаем
             break;
     }
     
@@ -90,6 +110,7 @@ void system_switch_mode(operation_mode_t new_mode)
     // ДЕЙСТВИЯ ПРИ ВХОДЕ В НОВЫЙ РЕЖИМ
     // ============================================
     
+    #if DEBUG_SYSTEM
     switch(new_mode) {
         case MODE_BOOT:
             my_printf("[SYSTEM] BOOT mode\n");
@@ -122,7 +143,6 @@ void system_switch_mode(operation_mode_t new_mode)
         case MODE_ANALOG_FOLLOW:
             my_printf("[SYSTEM] ANALOG FOLLOW mode\n");
             my_printf("[SYSTEM] LED: 2 Hz when signal / ON when no signal\n");
-            analog_follower_start();
             break;
             
         case MODE_HI_IMPEDANCE:
@@ -135,12 +155,6 @@ void system_switch_mode(operation_mode_t new_mode)
         case MODE_DISABLED:
             my_printf("[SYSTEM] DISABLED mode\n");
             my_printf("[SYSTEM] Stopping all timers...\n");
-            
-            TIM1->CR1 &= ~TIM_CR1_CEN;
-            TIM2->CR1 &= ~TIM_CR1_CEN;
-            TIM3->CR1 &= ~TIM_CR1_CEN;
-            TIM4->CR1 &= ~TIM_CR1_CEN;
-            
             my_printf("[SYSTEM] LED: OFF\n");
             break;
             
@@ -148,13 +162,38 @@ void system_switch_mode(operation_mode_t new_mode)
             my_printf("[SYSTEM] ERROR mode\n");
             my_printf("[SYSTEM] LED: 10 Hz fast blink\n");
             break;
+            
+        default:
+            // На всякий случай
+            break;
+    }
+    #endif
+    
+    // Реальные действия (без printf)
+    switch(new_mode) {
+        case MODE_DISABLED:
+            TIM1->CR1 &= ~TIM_CR1_CEN;
+            TIM2->CR1 &= ~TIM_CR1_CEN;
+            TIM3->CR1 &= ~TIM_CR1_CEN;
+            TIM4->CR1 &= ~TIM_CR1_CEN;
+            break;
+            
+        case MODE_ANALOG_FOLLOW:
+            analog_follower_start();
+            break;
+            
+        default:
+            // Для остальных режимов ничего не делаем
+            break;
     }
     
     g_system_state.led_last_toggle_time = HAL_GetTick();
     g_system_state.led_state = 0;
     HAL_GPIO_WritePin(GPIOA, EXT_LED_Pin, GPIO_PIN_SET);
     
+    #if DEBUG_SYSTEM
     my_printf("[SYSTEM] Mode switch complete\n\n");
+    #endif
 }
 
 const char* get_mode_name(operation_mode_t mode)
@@ -176,11 +215,12 @@ uint32_t system_get_uptime_seconds(void)
 {
     uint32_t current_time = HAL_GetTick();
     uint32_t uptime_ms = current_time - g_system_state.boot_time;
-    return uptime_ms / 1000;  // Конвертируем в секунды
+    return uptime_ms / 1000;
 }
 
 void system_print_status(void)
 {
+    #if DEBUG_SYSTEM
     my_printf("\n=== SYSTEM STATUS ===\n");
     my_printf("Mode: %s\n", get_mode_name(g_system_state.current_mode));
     my_printf("Channels: ");
@@ -209,6 +249,7 @@ void system_print_status(void)
              HAL_GetTick() - g_system_state.last_can_command_time);
     my_printf("Uptime: %lu seconds\n", system_get_uptime_seconds());
     my_printf("===================\n\n");
+    #endif
 }
 
 void set_channel_active(uint8_t channel_num, uint8_t active)
@@ -231,5 +272,8 @@ uint8_t is_channel_active(uint8_t channel_num)
 void set_all_channels_active(uint8_t active)
 {
     g_system_state.channel_mask = active ? 0x0F : 0x00;
+    
+    #if DEBUG_SYSTEM
     my_printf("[SYSTEM] All channels: %s\n", active ? "ACTIVE" : "INACTIVE");
+    #endif
 }
