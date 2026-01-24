@@ -1,9 +1,10 @@
 /**
- * system_modes.c - ОБНОВЛЁННАЯ ВЕРСИЯ
+ * system_modes.c - VERSION 2
  * 
  * Добавлено:
- * - Вызов analog_follower_start/stop при переключении режимов
- * - Улучшенная обработка переходов
+ * - MODE_HI_IMPEDANCE
+ * - boot_time для uptime
+ * - hi_impedance_active флаг
  */
 
 #include "system_modes.h"
@@ -21,6 +22,7 @@ const char* mode_names[] = {
     [MODE_PWM] = "PWM",
     [MODE_ANALOG_FOLLOW] = "ANALOG_FOLLOW",
     [MODE_DISABLED] = "DISABLED",
+    [MODE_HI_IMPEDANCE] = "HI_IMPEDANCE",
     [MODE_ERROR] = "ERROR"
 };
 
@@ -39,7 +41,9 @@ void system_init_modes(void)
     }
     
     g_system_state.analog_signal_present = 0;
+    g_system_state.hi_impedance_active = 0;
     g_system_state.last_can_command_time = HAL_GetTick();
+    g_system_state.boot_time = HAL_GetTick();  // Запоминаем время загрузки
     g_system_state.led_last_toggle_time = 0;
     g_system_state.led_state = 0;
     
@@ -66,13 +70,15 @@ void system_switch_mode(operation_mode_t new_mode)
     
     switch(old_mode) {
         case MODE_ANALOG_FOLLOW:
-            // КРИТИЧНО: останавливаем analog follower
             my_printf("[SYSTEM] Stopping analog follower...\n");
             analog_follower_stop();
             break;
             
+        case MODE_HI_IMPEDANCE:
+            my_printf("[SYSTEM] Exiting Hi-Z mode (GPIO will be reconfigured)\n");
+            break;
+            
         case MODE_FIXED_FREQUENCY:
-            // Частота уже установлена - оставляем как есть
             my_printf("[SYSTEM] Exiting fixed frequency mode\n");
             break;
             
@@ -84,7 +90,6 @@ void system_switch_mode(operation_mode_t new_mode)
             break;
     }
     
-    // Устанавливаем новый режим
     g_system_state.current_mode = new_mode;
     g_system_state.last_can_command_time = HAL_GetTick();
     
@@ -122,17 +127,22 @@ void system_switch_mode(operation_mode_t new_mode)
             break;
             
         case MODE_ANALOG_FOLLOW:
-            // КРИТИЧНО: запускаем analog follower
             my_printf("[SYSTEM] ANALOG FOLLOW mode\n");
             my_printf("[SYSTEM] LED: 2 Hz when signal / ON when no signal\n");
             analog_follower_start();
+            break;
+            
+        case MODE_HI_IMPEDANCE:
+            my_printf("[SYSTEM] HI-IMPEDANCE mode\n");
+            my_printf("[SYSTEM] GPIO pins: INPUT (Hi-Z)\n");
+            my_printf("[SYSTEM] Safe for external signals\n");
+            my_printf("[SYSTEM] LED: slow blink 0.2 Hz\n");
             break;
             
         case MODE_DISABLED:
             my_printf("[SYSTEM] DISABLED mode\n");
             my_printf("[SYSTEM] Stopping all timers...\n");
             
-            // Останавливаем все таймеры
             TIM1->CR1 &= ~TIM_CR1_CEN;
             TIM2->CR1 &= ~TIM_CR1_CEN;
             TIM3->CR1 &= ~TIM_CR1_CEN;
@@ -147,7 +157,6 @@ void system_switch_mode(operation_mode_t new_mode)
             break;
     }
     
-    // Сбрасываем LED
     g_system_state.led_last_toggle_time = HAL_GetTick();
     g_system_state.led_state = 0;
     HAL_GPIO_WritePin(GPIOA, EXT_LED_Pin, GPIO_PIN_SET);
@@ -157,10 +166,24 @@ void system_switch_mode(operation_mode_t new_mode)
 
 const char* get_mode_name(operation_mode_t mode)
 {
-    if(mode <= MODE_DISABLED) {
-        return mode_names[mode];
+    switch(mode) {
+        case MODE_BOOT: return "BOOT";
+        case MODE_RPM_DYNAMIC: return "RPM_DYNAMIC";
+        case MODE_FIXED_FREQUENCY: return "FIXED_FREQ";
+        case MODE_PWM: return "PWM";
+        case MODE_ANALOG_FOLLOW: return "ANALOG_FOLLOW";
+        case MODE_DISABLED: return "DISABLED";
+        case MODE_HI_IMPEDANCE: return "HI_IMPEDANCE";
+        case MODE_ERROR: return "ERROR";
+        default: return "UNKNOWN";
     }
-    return "UNKNOWN";
+}
+
+uint32_t system_get_uptime_seconds(void)
+{
+    uint32_t current_time = HAL_GetTick();
+    uint32_t uptime_ms = current_time - g_system_state.boot_time;
+    return uptime_ms / 1000;  // Конвертируем в секунды
 }
 
 void system_print_status(void)
@@ -188,8 +211,10 @@ void system_print_status(void)
         my_printf("Frequency: %lu Hz\n", analog_follower_get_frequency());
     }
     
+    my_printf("Hi-Z mode: %s\n", g_system_state.hi_impedance_active ? "ACTIVE" : "INACTIVE");
     my_printf("Last CAN: %lu ms ago\n", 
              HAL_GetTick() - g_system_state.last_can_command_time);
+    my_printf("Uptime: %lu seconds\n", system_get_uptime_seconds());
     my_printf("===================\n\n");
 }
 

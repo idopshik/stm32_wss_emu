@@ -1,3 +1,12 @@
+/**
+ * system_modes.h - VERSION 2
+ * 
+ * Добавлено:
+ * - MODE_HI_IMPEDANCE
+ * - hi_impedance_active флаг
+ * - uptime_seconds
+ */
+
 #ifndef SYSTEM_MODES_H
 #define SYSTEM_MODES_H
 
@@ -15,6 +24,7 @@ typedef enum {
     MODE_PWM = 3,               // ШИМ режим (0.5 Гц)
     MODE_ANALOG_FOLLOW = 4,     // Следование аналоговому сигналу
     MODE_DISABLED = 5,          // Выключено (LED выкл)
+    MODE_HI_IMPEDANCE = 0x10,   // Hi-Z режим (GPIO = input, защита)
     MODE_ERROR = 0xFF           // Ошибка (10 Гц)
 } operation_mode_t;
 
@@ -33,9 +43,11 @@ typedef struct {
     
     // Флаги состояния
     uint8_t analog_signal_present; // 1 = аналоговый сигнал есть
+    uint8_t hi_impedance_active;   // 1 = Hi-Z режим активен
     
     // Для отслеживания активности
     uint32_t last_can_command_time; // Время последней CAN команды
+    uint32_t boot_time;             // Время загрузки (для uptime)
     
     // Для индикации
     uint32_t led_last_toggle_time;
@@ -57,6 +69,7 @@ void system_init_modes(void);
 void system_switch_mode(operation_mode_t new_mode);
 const char* get_mode_name(operation_mode_t mode);
 void system_print_status(void);
+uint32_t system_get_uptime_seconds(void);
 
 // Утилиты для работы с каналами
 void set_channel_active(uint8_t channel_num, uint8_t active);

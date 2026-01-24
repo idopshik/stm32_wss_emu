@@ -1089,6 +1089,11 @@ void handle_mode_led_indication(void)
             }
             break;
             
+        case MODE_HI_IMPEDANCE:
+            // Медленное мигание в Hi-Z режиме (0.2 Гц = 5 секунд период)
+            interval_ms = 2500;  // 0.2 Гц
+            break;
+            
         case MODE_DISABLED:
             HAL_GPIO_WritePin(GPIOA, EXT_LED_Pin, GPIO_PIN_SET);
             return;
