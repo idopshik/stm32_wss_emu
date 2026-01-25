@@ -437,33 +437,19 @@ void send_error_response(uint8_t error_code)
 
 void send_can_message(uint32_t id, uint8_t* data, uint8_t length)
 {
-    FDCAN_TxHeaderTypeDef TxHeader = {0};
+    FDCAN_TxHeaderTypeDef TxHeader;
     
     TxHeader.Identifier = id;
     TxHeader.IdType = FDCAN_STANDARD_ID;
     TxHeader.TxFrameType = FDCAN_DATA_FRAME;
     TxHeader.DataLength = FDCAN_DLC_BYTES_8;
-    TxHeader.ErrorStateIndicator = FDCAN_ESI_ACTIVE;
+    TxHeader.ErrorStateIndicator = FDCAN_ESI_PASSIVE;  // ← ИЗМЕНИЛ НА PASSIVE
     TxHeader.BitRateSwitch = FDCAN_BRS_OFF;
     TxHeader.FDFormat = FDCAN_CLASSIC_CAN;
     TxHeader.TxEventFifoControl = FDCAN_NO_TX_EVENTS;
     TxHeader.MessageMarker = 0;
     
-    #if DEBUG_CAN_TX
-    // Проверять FIFO только в дебаге
-    if(HAL_FDCAN_GetTxFifoFreeLevel(&hfdcan1) == 0) {
-        my_printf("[CAN] WARNING: TX FIFO full!\n");
-        return;
-    }
-    #endif
-    
     HAL_FDCAN_AddMessageToTxFifoQ(&hfdcan1, &TxHeader, data);
-    
-    #if DEBUG_CAN_TX
-    if(HAL_FDCAN_AddMessageToTxFifoQ(&hfdcan1, &TxHeader, data) != HAL_OK) {
-        my_printf("[CAN] TX ERROR: ID 0x%03X\n", id);
-    }
-    #endif
 }
 
 // ============================================

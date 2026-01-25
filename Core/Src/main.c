@@ -574,14 +574,14 @@ static void MX_FDCAN1_Init(void)
 {
   hfdcan1.Instance = FDCAN1;
   hfdcan1.Init.ClockDivider = FDCAN_CLOCK_DIV1;
-  hfdcan1.Init.FrameFormat = FDCAN_FRAME_CLASSIC;    // КЛАССИЧЕСКИЙ CAN
+  hfdcan1.Init.FrameFormat = FDCAN_FRAME_CLASSIC;
   hfdcan1.Init.Mode = FDCAN_MODE_NORMAL;
-  hfdcan1.Init.AutoRetransmission = ENABLE;          // КРИТИЧЕСКИ ВАЖНО!
-  hfdcan1.Init.TransmitPause = DISABLE;
+  hfdcan1.Init.AutoRetransmission = DISABLE;     // ← ВАЖНО!
+  hfdcan1.Init.TransmitPause = DISABLE;         // ← ВАЖНО!
   hfdcan1.Init.ProtocolException = DISABLE;
-  hfdcan1.Init.NominalPrescaler = 1;
+  hfdcan1.Init.NominalPrescaler = 1;            // 500k при 150MHz
   hfdcan1.Init.NominalSyncJumpWidth = 2;
-  hfdcan1.Init.NominalTimeSeg1 = 13;
+  hfdcan1.Init.NominalTimeSeg1 = 13;            // 13+2+1 = 16 квантов
   hfdcan1.Init.NominalTimeSeg2 = 2;
   hfdcan1.Init.DataPrescaler = 1;
   hfdcan1.Init.DataSyncJumpWidth = 7;
@@ -589,7 +589,7 @@ static void MX_FDCAN1_Init(void)
   hfdcan1.Init.DataTimeSeg2 = 8;
   hfdcan1.Init.StdFiltersNbr = 1;
   hfdcan1.Init.ExtFiltersNbr = 0;
-  hfdcan1.Init.TxFifoQueueMode = FDCAN_TX_FIFO_OPERATION;  // TX FIFO
+  hfdcan1.Init.TxFifoQueueMode = FDCAN_TX_FIFO_OPERATION;  // ← ВАЖНО!
   
   if (HAL_FDCAN_Init(&hfdcan1) != HAL_OK) {
     Error_Handler();
