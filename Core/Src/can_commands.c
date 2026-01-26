@@ -355,8 +355,47 @@ void exit_hi_impedance_mode(void)
     my_printf("[HI-Z] ===================================\n\n");
 }
 
+
+uint32_t get_timer_output_frequency(TIM_TypeDef* TIMx)
+{
+    if(TIMx == NULL || (TIMx->CR1 & TIM_CR1_CEN) == 0) {
+        return 0;
+    }
+    
+    uint32_t psc = TIMx->PSC;
+    uint32_t arr = TIMx->ARR;
+    
+    // Защита от некорректных значений
+    if(arr == 0 || arr == 0xFFFF) return 0;
+    
+    // Формула: F_timer = APB1_CLK / ((PSC+1) × (ARR+1))
+    uint64_t divider = (uint64_t)(psc + 1) * (arr + 1);
+    if(divider == 0) return 0;
+    
+    uint32_t timer_freq = (uint32_t)(APB1_CLK / divider);
+    
+    // КОРРЕКЦИЯ ДЛЯ РЕЖИМА TOGGLE (TIM2)
+    // TIM2 настроен в режиме TIM_OCMODE_TOGGLE - частота на выходе в 2 раза меньше
+    if(TIMx == TIM2) {
+        // Проверяем, что канал 1 действительно в режиме TOGGLE и включен
+        uint32_t ccmr1 = TIMx->CCMR1;
+        uint32_t ccer = TIMx->CCER;
+        
+        // Режим TOGGLE = биты OC1M[2:0] = 001
+        uint32_t oc1m = (ccmr1 & TIM_CCMR1_OC1M) >> TIM_CCMR1_OC1M_Pos;
+        
+        if(oc1m == TIM_OCMODE_TOGGLE && (ccer & TIM_CCER_CC1E)) {
+            // TOGGLE режим: выходная частота = частота таймера / 2
+            timer_freq /= 2;
+        }
+    }
+    // TIM1, TIM3, TIM4: режим сравнения не используется, полная частота
+    
+    return timer_freq;
+}
+
 // ============================================
-// ОТПРАВКА СТАТУСА (ID 0x006) - УЛУЧШЕННЫЙ
+// ОТПРАВКА СТАТУСА (ID 0x006) - ИСПРАВЛЕННЫЙ
 // ============================================
 
 void send_system_status(void)
@@ -369,17 +408,107 @@ void send_system_status(void)
     // Byte 1: Маска активных каналов
     status_data[1] = g_system_state.channel_mask;
     
-    // Bytes 2-3: Частота / 10 Гц (little-endian uint16_t)
-    if(g_system_state.target_frequency_hz > 0) {
-        uint16_t freq_x10 = (uint16_t)(g_system_state.target_frequency_hz / 10);
+    // Bytes 2-3: Частота (зависит от режима)
+    if(g_system_state.current_mode == MODE_FIXED_FREQUENCY || 
+       g_system_state.current_mode == MODE_PWM) {
+        // Fixed/PWM режим: целевая частота ×10 (0.1 Гц)
+        uint16_t freq_x10 = (uint16_t)(g_system_state.target_frequency_hz * 10);
         if(freq_x10 > 65535) freq_x10 = 65535;
         status_data[2] = freq_x10 & 0xFF;
         status_data[3] = (freq_x10 >> 8) & 0xFF;
     }
+    else if(g_system_state.current_mode == MODE_RPM_DYNAMIC) {
+        // RPM режим: МАКСИМАЛЬНАЯ ВЫХОДНАЯ частота из активных каналов ×10 (0.1 Гц)
+        uint32_t max_freq = 0;
+        TIM_TypeDef* timers[4] = {TIM1, TIM2, TIM3, TIM4};
+        uint8_t any_active = 0;
+        
+        for(int i = 0; i < 4; i++) {
+            if(g_system_state.channel_mask & (1 << i)) {
+                uint32_t freq = get_timer_output_frequency(timers[i]);
+                if(freq > 0) {
+                    any_active = 1;
+                    if(freq > max_freq) {
+                        max_freq = freq;
+                    }
+                }
+            }
+        }
+        
+        uint16_t max_freq_x10 = 0;
+        if(max_freq > 0) {
+            if(max_freq > 6553) {  // 6553.5 Гц максимум (65535 / 10)
+                max_freq_x10 = 65535;
+            } else {
+                max_freq_x10 = (uint16_t)(max_freq * 10);
+            }
+        }
+        
+        status_data[2] = max_freq_x10 & 0xFF;
+        status_data[3] = (max_freq_x10 >> 8) & 0xFF;
+    }
+    else {
+        // Другие режимы (ANALOG_FOLLOW, HI_IMPEDANCE, etc.)
+        status_data[2] = 0;
+        status_data[3] = 0;
+    }
     
-    // Byte 4: Скважность ШИМ (если режим PWM)
+    // Byte 4: Зависит от режима
     if(g_system_state.current_mode == MODE_PWM) {
+        // PWM режим: скважность
         status_data[4] = g_system_state.pwm_duty_percent;
+    }
+    else if(g_system_state.current_mode == MODE_RPM_DYNAMIC) {
+        // RPM режим: состояние колёс (маска + флаги)
+        status_data[4] = g_system_state.channel_mask;  // Биты 0-3: активные каналы
+        
+        // Добавляем флаги в биты 4-7
+        uint8_t wheel_flags = 0;
+        
+        // Проверяем есть ли активные таймеры с выходной частотой > 0
+        TIM_TypeDef* timers[4] = {TIM1, TIM2, TIM3, TIM4};
+        uint8_t any_active_freq = 0;
+        uint8_t all_running = 1;
+        uint8_t has_errors = 0;
+        
+        for(int i = 0; i < 4; i++) {
+            if(g_system_state.channel_mask & (1 << i)) {
+                uint32_t freq = get_timer_output_frequency(timers[i]);
+                
+                if(freq > 0) {
+                    any_active_freq = 1;
+                }
+                
+                if((timers[i]->CR1 & TIM_CR1_CEN) == 0) {
+                    all_running = 0;
+                }
+                
+                if(timers[i]->ARR == 0 || timers[i]->ARR > 65000) {
+                    has_errors = 1;
+                }
+            }
+        }
+        
+        if(any_active_freq) {
+            wheel_flags |= (1 << 4);  // Bit 4: есть активные таймеры с выходной частотой > 0
+        }
+        
+        if(all_running && g_system_state.channel_mask != 0) {
+            wheel_flags |= (1 << 5);  // Bit 5: все активные таймеры запущены
+        }
+        
+        if(has_errors) {
+            wheel_flags |= (1 << 6);  // Bit 6: есть ошибки конфигурации
+        }
+        
+        // Bit 7: зарезервировано = 0
+        
+        // Объединяем маску каналов и флаги
+        status_data[4] |= (wheel_flags << 4);
+    }
+    else {
+        // Другие режимы: 0
+        status_data[4] = 0;
     }
     
     // Byte 5: Флаги состояния
@@ -391,7 +520,7 @@ void send_system_status(void)
         status_data[5] |= 0x02;  // Bit 1: Hi-Z mode
     }
     
-    // Bytes 6-7: Uptime в секундах (little-endian uint16_t)
+    // Bytes 6-7: Uptime в секундах
     uint32_t uptime = system_get_uptime_seconds();
     if(uptime > 65535) uptime = 65535;
     status_data[6] = uptime & 0xFF;
@@ -401,11 +530,35 @@ void send_system_status(void)
     send_can_message(CAN_STATUS_ID, status_data, 8);
     
     #if DEBUG_CAN_TX
-    my_printf("[STATUS] Sent: mode=0x%02X (%s), ch=0x%02X, freq=%lu Hz\n",
+    my_printf("[STATUS] Sent: mode=0x%02X (%s), ch=0x%02X\n",
               status_data[0], 
               get_mode_name(g_system_state.current_mode),
-              status_data[1], 
-              g_system_state.target_frequency_hz);
+              status_data[1]);
+    
+    if(g_system_state.current_mode == MODE_RPM_DYNAMIC) {
+        uint16_t freq = (status_data[3] << 8) | status_data[2];
+        uint8_t wheel_byte = status_data[4];
+        my_printf("[STATUS] Max OUTPUT freq: %.1f Hz\n", freq / 10.0f);
+        my_printf("[STATUS] Wheel state: mask=0x%02X, flags=0x%02X\n",
+                  wheel_byte & 0x0F, (wheel_byte >> 4) & 0x0F);
+        
+        // Детальный дебаг
+        TIM_TypeDef* timers[4] = {TIM1, TIM2, TIM3, TIM4};
+        for(int i = 0; i < 4; i++) {
+            if(g_system_state.channel_mask & (1 << i)) {
+                uint32_t out_freq = get_timer_output_frequency(timers[i]);
+                uint32_t timer_freq = APB1_CLK / ((timers[i]->PSC + 1) * (timers[i]->ARR + 1));
+                my_printf("[STATUS] TIM%d: output=%.1f Hz, timer=%.1f Hz, CEN=%d\n",
+                         i+1, out_freq / 1.0f, timer_freq / 1.0f,
+                         (timers[i]->CR1 & TIM_CR1_CEN) ? 1 : 0);
+            }
+        }
+    }
+    else if(g_system_state.current_mode == MODE_FIXED_FREQUENCY || 
+              g_system_state.current_mode == MODE_PWM) {
+        uint16_t freq = (status_data[3] << 8) | status_data[2];
+        my_printf("[STATUS] Target freq: %.1f Hz\n", freq / 10.0f);
+    }
     
     my_printf("[STATUS] Flags: analog=%d, hi_z=%d, uptime=%lu sec\n",
               g_system_state.analog_signal_present,

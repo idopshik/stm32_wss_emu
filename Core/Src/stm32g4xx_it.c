@@ -308,7 +308,7 @@ void TIM8_TRG_COM_IRQHandler(void)
   */
 void TIM8_CC_IRQHandler(void)
 {
-    /* USER CODE BEGIN TIM8_CC_IRQn 0 */
+  /* USER CODE BEGIN TIM8_CC_IRQn 0 */
     
     // Проверяем флаг захвата канала 1
     if(TIM8->SR & TIM_SR_CC1IF) {
@@ -319,12 +319,11 @@ void TIM8_CC_IRQHandler(void)
         analog_follower_capture_callback();
     }
     
-    /* USER CODE END TIM8_CC_IRQn 0 */
-    /* HAL обработка если нужна */
-    HAL_TIM_IRQHandler(&htim8);
-    /* USER CODE BEGIN TIM8_CC_IRQn 1 */
+  /* USER CODE END TIM8_CC_IRQn 0 */
+  HAL_TIM_IRQHandler(&htim8);
+  /* USER CODE BEGIN TIM8_CC_IRQn 1 */
     
-    /* USER CODE END TIM8_CC_IRQn 1 */
+  /* USER CODE END TIM8_CC_IRQn 1 */
 }
 
 /**

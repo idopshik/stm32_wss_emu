@@ -42,6 +42,7 @@ extern uint8_t can_tx_error_code;
 void process_can_command(uint8_t* data);
 void send_system_status(void);
 void send_error_response(uint8_t error_code);
+uint32_t get_timer_frequency(TIM_TypeDef* TIMx);
 
 // ============================================
 // КОДЫ КОМАНД (Байт 0)

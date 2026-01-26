@@ -83,6 +83,8 @@ void Error_Handler(void);
 #define EXT_LED_GPIO_Port GPIOA
 #define tim3_out_Pin GPIO_PIN_6
 #define tim3_out_GPIO_Port GPIOA
+#define SOLID_RELAY_CONTROL_Pin GPIO_PIN_10
+#define SOLID_RELAY_CONTROL_GPIO_Port GPIOB
 #define LED_Blue_Pin GPIO_PIN_6
 #define LED_Blue_GPIO_Port GPIOC
 #define tim1_out_Pin GPIO_PIN_8

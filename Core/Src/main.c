@@ -194,7 +194,7 @@ int calculete_prsc_and_perio(int val, int *arr, whl_chnl *whl_arr[], int wheelnu
 
     // ВАЖНО: arr[0] - текущий PSC, arr[1] - новый PSC
     arr[0] = whl_arr[wheelnum]->prev_psc;
-    arr[1] = newpresc;  // ДОБАВИТЬ ЭТУ СТРОЧКУ!
+    arr[1] = newpresc;  // ДОБАВ�?ТЬ ЭТУ СТРОЧКУ!
 
     uint32_t tmp;
     tmp = (APB1_CLK / (val * factor * MinutTeethFactor * (arr[0] + 1))) - 1;
@@ -226,7 +226,15 @@ void update_wheel_seamless(TIM_TypeDef* TIMx, int rpm, whl_chnl* wheel)
         TIMx->CR1 &= ~TIM_CR1_CEN;
         wheel->pending_update = 0;
         __HAL_TIM_DISABLE_IT(wheel->htim, TIM_IT_UPDATE);
+
+        // СНИМАЕМ БИТ ИЗ МАСКИ
+        uint8_t channel_bit = 1 << wheel->wheel_num;
+        g_system_state.channel_mask &= ~channel_bit;
         return;
+    } else {
+        // ДОБАВЛЯЕМ БИТ В МАСКУ
+        uint8_t channel_bit = 1 << wheel->wheel_num;
+        g_system_state.channel_mask |= channel_bit;
     }
     
     int calc[4];
@@ -400,17 +408,29 @@ void HAL_TIM_PeriodElapsedCallback(TIM_HandleTypeDef *htim)
   */
 int main(void)
 {
+
+  /* USER CODE BEGIN 1 */
+
+  /* USER CODE END 1 */
+
+  /* MCU Configuration--------------------------------------------------------*/
+
+  /* Reset of all peripherals, Initializes the Flash interface and the Systick. */
   HAL_Init();
+
+  /* USER CODE BEGIN Init */
+
+  /* USER CODE END Init */
+
+  /* Configure the system clock */
   SystemClock_Config();
+
+  /* USER CODE BEGIN SysInit */
+
+  /* USER CODE END SysInit */
+
+  /* Initialize all configured peripherals */
   MX_GPIO_Init();
-  MX_USART1_UART_Init();
-
-  my_printf("\n\n=== SYSTEM BOOT ===\n");
-    my_printf("STM32G431 - No EEPROM support\n");
-
-  // Инициализация аналогового режима (если используется)
-  analog_follower_init();
-
   MX_FDCAN1_Init();
   MX_TIM1_Init();
   MX_TIM2_Init();
@@ -418,17 +438,7 @@ int main(void)
   MX_TIM4_Init();
   MX_TIM6_Init();
   MX_TIM8_Init();
-
-    // Инициализация системы режимов
-    system_init_modes();
-
-    // Всегда запускаем в RPM режиме (без восстановления из EEPROM)
-    system_switch_mode(MODE_RPM_DYNAMIC);
-    
-    // Отправляем начальный статус
-    send_system_status();
-    
-
+  MX_USART1_UART_Init();
   /* USER CODE BEGIN 2 */
     CANFD1_Set_Filtes();
 
@@ -469,8 +479,34 @@ HAL_NVIC_SetPriority(USART1_IRQn, 10, 0);         // UART - низкий
     my_printf("Current mode: %s\n", get_mode_name(g_system_state.current_mode));
     my_printf("No EEPROM - all settings volatile\n");
     my_printf("========================================\n\n");
-    
-/* USER CODE END 2 */
+
+
+    my_printf("=== Clock Configuration ===\n");
+    my_printf("SystemCoreClock: %lu Hz\n", SystemCoreClock);
+    my_printf("HCLK: %lu Hz\n", HAL_RCC_GetHCLKFreq());
+    my_printf("PCLK1: %lu Hz\n", HAL_RCC_GetPCLK1Freq());
+    my_printf("PCLK2: %lu Hz\n", HAL_RCC_GetPCLK2Freq());
+
+    // ??? ???? PLL
+    uint32_t pllm = (RCC->PLLCFGR & RCC_PLLCFGR_PLLM) >> 4;
+    uint32_t plln = (RCC->PLLCFGR & RCC_PLLCFGR_PLLN) >> 8;
+    uint32_t pllp = (RCC->PLLCFGR & RCC_PLLCFGR_PLLP) >> 17;
+    uint32_t pllq = (RCC->PLLCFGR & RCC_PLLCFGR_PLLQ) >> 21;
+    uint32_t pllr = (RCC->PLLCFGR & RCC_PLLCFGR_PLLR) >> 25;
+
+    my_printf("PLL raw: M=%lu, N=%lu, P=%lu, Q=%lu, R=%lu\n", 
+              pllm, plln, pllp, pllq, pllr);
+
+    // ???????? ???????? ??????? ???????
+    my_printf("\nTimer test:\n");
+    my_printf("TIM1 input: %lu Hz\n", HAL_RCC_GetPCLK1Freq());
+    my_printf("TIM1 PSC: %lu\n", TIM1->PSC);
+    my_printf("TIM1 ARR: %lu\n", TIM1->ARR);
+    uint32_t tim1_freq = HAL_RCC_GetPCLK1Freq() / ((TIM1->PSC + 1) * (TIM1->ARR + 1));
+    my_printf("TIM1 output: %lu Hz\n", tim1_freq);
+
+
+  /* USER CODE END 2 */
 
   /* Infinite loop */
   /* USER CODE BEGIN WHILE */
@@ -505,10 +541,43 @@ whl_chnl rr_whl_s = {numRR, &htim4, 0, 24, 0, 0, 0, 0, 0, 0};
 
     /* USER CODE BEGIN WHILE */
 // ============================================
-// ГЛАВНЫЙ ЦИКЛ - ОПТИМИЗИРОВАННЫЙ
+// ГЛАВНЫЙ Ц�?КЛ - ОПТ�?М�?З�?РОВАННЫЙ
 // ============================================
 
 while (1) {
+
+
+
+
+    // ===== DEBUG =====
+    // Временный дебаг
+    static uint32_t last_debug = 0;
+    if(HAL_GetTick() - last_debug > 500) {
+        last_debug = HAL_GetTick();
+        
+        if(g_system_state.current_mode == MODE_RPM_DYNAMIC) {
+            my_printf("[DEBUG] Channel mask: 0x%02X\n", g_system_state.channel_mask);
+            my_printf("[DEBUG] TIM1 CEN=%d, TIM2 CEN=%d, TIM3 CEN=%d, TIM4 CEN=%d\n",
+                     (TIM1->CR1 & TIM_CR1_CEN) ? 1 : 0,
+                     (TIM2->CR1 & TIM_CR1_CEN) ? 1 : 0,
+                     (TIM3->CR1 & TIM_CR1_CEN) ? 1 : 0,
+                     (TIM4->CR1 & TIM_CR1_CEN) ? 1 : 0);
+            my_printf("[DEBUG] whl_arr speeds: %d, %d, %d, %d\n",
+                     whl_arr[0]->prev_speed,
+                     whl_arr[1]->prev_speed,
+                     whl_arr[2]->prev_speed,
+                     whl_arr[3]->prev_speed);
+        }
+    }
+    // ===== END DEBUG =====
+
+
+
+
+
+
+
+
     // ===== CAN ОБРАБОТКА =====
     process_can_in_main();
     
@@ -555,15 +624,58 @@ while (1) {
     
     // УБРАТЬ print_timer_status() из цикла!
     // Оставить только для отладки фиксированного режима
-}
+
     /* USER CODE END WHILE */
+
+    /* USER CODE BEGIN 3 */
+  }
+  /* USER CODE END 3 */
 }
 
-// Остальные функции инициализации (SystemClock_Config, MX_FDCAN1_Init, MX_TIMx_Init, MX_USART1_UART_Init, MX_GPIO_Init)
-// остаются без изменений из вашего исходного кода
+/**
+  * @brief System Clock Configuration
+  * @retval None
+  */
+void SystemClock_Config(void)
+{
+  RCC_OscInitTypeDef RCC_OscInitStruct = {0};
+  RCC_ClkInitTypeDef RCC_ClkInitStruct = {0};
 
+  /** Configure the main internal regulator output voltage
+  */
+  HAL_PWREx_ControlVoltageScaling(PWR_REGULATOR_VOLTAGE_SCALE1);
 
+  /** Initializes the RCC Oscillators according to the specified parameters
+  * in the RCC_OscInitTypeDef structure.
+  */
+  RCC_OscInitStruct.OscillatorType = RCC_OSCILLATORTYPE_HSE;
+  RCC_OscInitStruct.HSEState = RCC_HSE_ON;
+  RCC_OscInitStruct.PLL.PLLState = RCC_PLL_ON;
+  RCC_OscInitStruct.PLL.PLLSource = RCC_PLLSOURCE_HSE;
+  RCC_OscInitStruct.PLL.PLLM = RCC_PLLM_DIV2;
+  RCC_OscInitStruct.PLL.PLLN = 75;
+  RCC_OscInitStruct.PLL.PLLP = RCC_PLLP_DIV2;
+  RCC_OscInitStruct.PLL.PLLQ = RCC_PLLQ_DIV2;
+  RCC_OscInitStruct.PLL.PLLR = RCC_PLLR_DIV2;
+  if (HAL_RCC_OscConfig(&RCC_OscInitStruct) != HAL_OK)
+  {
+    Error_Handler();
+  }
 
+  /** Initializes the CPU, AHB and APB buses clocks
+  */
+  RCC_ClkInitStruct.ClockType = RCC_CLOCKTYPE_HCLK|RCC_CLOCKTYPE_SYSCLK
+                              |RCC_CLOCKTYPE_PCLK1|RCC_CLOCKTYPE_PCLK2;
+  RCC_ClkInitStruct.SYSCLKSource = RCC_SYSCLKSOURCE_PLLCLK;
+  RCC_ClkInitStruct.AHBCLKDivider = RCC_SYSCLK_DIV1;
+  RCC_ClkInitStruct.APB1CLKDivider = RCC_HCLK_DIV1;
+  RCC_ClkInitStruct.APB2CLKDivider = RCC_HCLK_DIV1;
+
+  if (HAL_RCC_ClockConfig(&RCC_ClkInitStruct, FLASH_LATENCY_4) != HAL_OK)
+  {
+    Error_Handler();
+  }
+}
 
 /**
   * @brief FDCAN1 Initialization Function
@@ -572,16 +684,24 @@ while (1) {
   */
 static void MX_FDCAN1_Init(void)
 {
+
+  /* USER CODE BEGIN FDCAN1_Init 0 */
+
+  /* USER CODE END FDCAN1_Init 0 */
+
+  /* USER CODE BEGIN FDCAN1_Init 1 */
+
+  /* USER CODE END FDCAN1_Init 1 */
   hfdcan1.Instance = FDCAN1;
   hfdcan1.Init.ClockDivider = FDCAN_CLOCK_DIV1;
   hfdcan1.Init.FrameFormat = FDCAN_FRAME_CLASSIC;
   hfdcan1.Init.Mode = FDCAN_MODE_NORMAL;
-  hfdcan1.Init.AutoRetransmission = DISABLE;     // ← ВАЖНО!
-  hfdcan1.Init.TransmitPause = DISABLE;         // ← ВАЖНО!
+  hfdcan1.Init.AutoRetransmission = DISABLE;
+  hfdcan1.Init.TransmitPause = DISABLE;
   hfdcan1.Init.ProtocolException = DISABLE;
-  hfdcan1.Init.NominalPrescaler = 1;            // 500k при 150MHz
+  hfdcan1.Init.NominalPrescaler = 1;
   hfdcan1.Init.NominalSyncJumpWidth = 2;
-  hfdcan1.Init.NominalTimeSeg1 = 13;            // 13+2+1 = 16 квантов
+  hfdcan1.Init.NominalTimeSeg1 = 13;
   hfdcan1.Init.NominalTimeSeg2 = 2;
   hfdcan1.Init.DataPrescaler = 1;
   hfdcan1.Init.DataSyncJumpWidth = 7;
@@ -589,11 +709,15 @@ static void MX_FDCAN1_Init(void)
   hfdcan1.Init.DataTimeSeg2 = 8;
   hfdcan1.Init.StdFiltersNbr = 1;
   hfdcan1.Init.ExtFiltersNbr = 0;
-  hfdcan1.Init.TxFifoQueueMode = FDCAN_TX_FIFO_OPERATION;  // ← ВАЖНО!
-  
-  if (HAL_FDCAN_Init(&hfdcan1) != HAL_OK) {
+  hfdcan1.Init.TxFifoQueueMode = FDCAN_TX_FIFO_OPERATION;
+  if (HAL_FDCAN_Init(&hfdcan1) != HAL_OK)
+  {
     Error_Handler();
   }
+  /* USER CODE BEGIN FDCAN1_Init 2 */
+
+  /* USER CODE END FDCAN1_Init 2 */
+
 }
 
 /**
@@ -946,6 +1070,9 @@ static void MX_GPIO_Init(void)
   HAL_GPIO_WritePin(GPIOA, EXT_LED_Pin|tim3_out_Pin|tim1_out_Pin, GPIO_PIN_RESET);
 
   /*Configure GPIO pin Output Level */
+  HAL_GPIO_WritePin(SOLID_RELAY_CONTROL_GPIO_Port, SOLID_RELAY_CONTROL_Pin, GPIO_PIN_SET);
+
+  /*Configure GPIO pin Output Level */
   HAL_GPIO_WritePin(LED_Blue_GPIO_Port, LED_Blue_Pin, GPIO_PIN_RESET);
 
   /*Configure GPIO pin Output Level */
@@ -964,6 +1091,13 @@ static void MX_GPIO_Init(void)
   GPIO_InitStruct.Speed = GPIO_SPEED_FREQ_LOW;
   HAL_GPIO_Init(GPIOA, &GPIO_InitStruct);
 
+  /*Configure GPIO pins : SOLID_RELAY_CONTROL_Pin Out_1_Pin Out_2_Pin tim4_out_Pin */
+  GPIO_InitStruct.Pin = SOLID_RELAY_CONTROL_Pin|Out_1_Pin|Out_2_Pin|tim4_out_Pin;
+  GPIO_InitStruct.Mode = GPIO_MODE_OUTPUT_PP;
+  GPIO_InitStruct.Pull = GPIO_NOPULL;
+  GPIO_InitStruct.Speed = GPIO_SPEED_FREQ_LOW;
+  HAL_GPIO_Init(GPIOB, &GPIO_InitStruct);
+
   /*Configure GPIO pin : LED_Blue_Pin */
   GPIO_InitStruct.Pin = LED_Blue_Pin;
   GPIO_InitStruct.Mode = GPIO_MODE_OUTPUT_PP;
@@ -971,72 +1105,14 @@ static void MX_GPIO_Init(void)
   GPIO_InitStruct.Speed = GPIO_SPEED_FREQ_LOW;
   HAL_GPIO_Init(LED_Blue_GPIO_Port, &GPIO_InitStruct);
 
-  /*Configure GPIO pins : Out_1_Pin Out_2_Pin tim4_out_Pin */
-  GPIO_InitStruct.Pin = Out_1_Pin|Out_2_Pin|tim4_out_Pin;
-  GPIO_InitStruct.Mode = GPIO_MODE_OUTPUT_PP;
-  GPIO_InitStruct.Pull = GPIO_NOPULL;
-  GPIO_InitStruct.Speed = GPIO_SPEED_FREQ_LOW;
-  HAL_GPIO_Init(GPIOB, &GPIO_InitStruct);
-
 /* USER CODE BEGIN MX_GPIO_Init_2 */
 /* USER CODE END MX_GPIO_Init_2 */
 }
 
-
-
-
-/**
-  * @brief System Clock Configuration
-  * @retval None
-  */
-void SystemClock_Config(void)
-{
-  RCC_OscInitTypeDef RCC_OscInitStruct = {0};
-  RCC_ClkInitTypeDef RCC_ClkInitStruct = {0};
-
-  /** Configure the main internal regulator output voltage
-  */
-  HAL_PWREx_ControlVoltageScaling(PWR_REGULATOR_VOLTAGE_SCALE1);
-
-  /** Initializes the RCC Oscillators according to the specified parameters
-  * in the RCC_OscInitTypeDef structure.
-  */
-  RCC_OscInitStruct.OscillatorType = RCC_OSCILLATORTYPE_HSE;
-  RCC_OscInitStruct.HSEState = RCC_HSE_ON;
-  RCC_OscInitStruct.PLL.PLLState = RCC_PLL_ON;
-  RCC_OscInitStruct.PLL.PLLSource = RCC_PLLSOURCE_HSE;
-  RCC_OscInitStruct.PLL.PLLM = RCC_PLLM_DIV2;
-  RCC_OscInitStruct.PLL.PLLN = 75;
-  RCC_OscInitStruct.PLL.PLLP = RCC_PLLP_DIV2;
-  RCC_OscInitStruct.PLL.PLLQ = RCC_PLLQ_DIV2;
-  RCC_OscInitStruct.PLL.PLLR = RCC_PLLR_DIV2;
-  if (HAL_RCC_OscConfig(&RCC_OscInitStruct) != HAL_OK)
-  {
-    Error_Handler();
-  }
-
-  /** Initializes the CPU, AHB and APB buses clocks
-  */
-  RCC_ClkInitStruct.ClockType = RCC_CLOCKTYPE_HCLK|RCC_CLOCKTYPE_SYSCLK
-                              |RCC_CLOCKTYPE_PCLK1|RCC_CLOCKTYPE_PCLK2;
-  RCC_ClkInitStruct.SYSCLKSource = RCC_SYSCLKSOURCE_PLLCLK;
-  RCC_ClkInitStruct.AHBCLKDivider = RCC_SYSCLK_DIV1;
-  RCC_ClkInitStruct.APB1CLKDivider = RCC_HCLK_DIV1;
-  RCC_ClkInitStruct.APB2CLKDivider = RCC_HCLK_DIV1;
-
-  if (HAL_RCC_ClockConfig(&RCC_ClkInitStruct, FLASH_LATENCY_4) != HAL_OK)
-  {
-    Error_Handler();
-  }
-}
-
-// ... остальные функции инициализации периферии (FDCAN, TIM, USART, GPIO) 
-// должны быть взяты из вашего исходного кода без изменений
-
 /* USER CODE BEGIN 4 */
 
 // ============================================
-// ОБНОВЛЕНИЕ ИНДИКАЦИИ СИСТЕМЫ
+// ОБНОВЛЕН�?Е �?НД�?КАЦ�?�? С�?СТЕМЫ
 // ============================================
 
 void update_system_indicators(void)
@@ -1055,7 +1131,7 @@ void update_system_indicators(void)
 }
 
 // ============================================
-// LED ИНДИКАЦИЯ - ИСПРАВЛЕННАЯ
+// LED �?НД�?КАЦ�?Я - �?СПРАВЛЕННАЯ
 // ============================================
 
 void handle_mode_led_indication(void)
@@ -1070,7 +1146,7 @@ void handle_mode_led_indication(void)
             
         case MODE_RPM_DYNAMIC:
             // LED управляется через can_active_receiving в TIM8
-            // НИЧЕГО НЕ ДЕЛАЕМ ЗДЕСЬ
+            // Н�?ЧЕГО НЕ ДЕЛАЕМ ЗДЕСЬ
             return;
             
         case MODE_FIXED_FREQUENCY:
@@ -1125,7 +1201,7 @@ void handle_mode_led_indication(void)
 }
 
 // ============================================
-// ПРОВЕРКА ЗДОРОВЬЯ СИСТЕМЫ
+// ПРОВЕРКА ЗДОРОВЬЯ С�?СТЕМЫ
 // ============================================
 
 void check_system_health(void)
@@ -1147,7 +1223,7 @@ void check_system_health(void)
         if(time_since_last_cmd > 10000) { // 10 секунд нет команд
             printf("[WARNING] No CAN commands for %lu seconds\n", time_since_last_cmd / 1000);
             
-            // Если в фиксированном режиме или ШИМ - это нормально
+            // Если в фиксированном режиме или Ш�?М - это нормально
             // Если в аналоговом режиме - возможно, пропал сигнал
             if(g_system_state.current_mode == MODE_ANALOG_FOLLOW) {
                 g_system_state.analog_signal_present = 0;
@@ -1169,7 +1245,7 @@ static void CANFD1_Set_Filtes(void)
     FDCAN_FilterTypeDef sFilterConfig = {0};
     
     // ============================================
-    // ФИЛЬТР: принимаем 0x003 (RPM) и 0x004 (команды)
+    // Ф�?ЛЬТР: принимаем 0x003 (RPM) и 0x004 (команды)
     // ============================================
     sFilterConfig.IdType = FDCAN_STANDARD_ID;
     sFilterConfig.FilterIndex = 0;
@@ -1186,7 +1262,7 @@ static void CANFD1_Set_Filtes(void)
     }
     
     // ============================================
-    // ГЛОБАЛЬНЫЙ ФИЛЬТР
+    // ГЛОБАЛЬНЫЙ Ф�?ЛЬТР
     // ============================================
     if (HAL_FDCAN_ConfigGlobalFilter(&hfdcan1, 
         FDCAN_REJECT,      // Отклонять стандартные ID не прошедшие фильтр
@@ -1197,7 +1273,7 @@ static void CANFD1_Set_Filtes(void)
     }
 
     // ============================================
-    // АКТИВАЦИЯ ПРЕРЫВАНИЙ (ТОЛЬКО RX)
+    // АКТ�?ВАЦ�?Я ПРЕРЫВАН�?Й (ТОЛЬКО RX)
     // ============================================
     if (HAL_FDCAN_ActivateNotification(&hfdcan1, 
         FDCAN_IT_RX_FIFO0_NEW_MESSAGE, 0) != HAL_OK) {
@@ -1218,7 +1294,7 @@ static void CANFD1_Set_Filtes(void)
 }
 
 // ============================================
-// HAL_FDCAN_RxFifo0Callback - ТОЛЬКО КОПИЯ ДАННЫХ!
+// HAL_FDCAN_RxFifo0Callback - ТОЛЬКО КОП�?Я ДАННЫХ!
 // ============================================
 void HAL_FDCAN_RxFifo0Callback(FDCAN_HandleTypeDef *hfdcan, uint32_t RxFifo0ITs)
 {
@@ -1233,12 +1309,12 @@ void HAL_FDCAN_RxFifo0Callback(FDCAN_HandleTypeDef *hfdcan, uint32_t RxFifo0ITs)
         return;
     }
     
-    // КОПИРОВАТЬ ДАННЫЕ В ГЛОБАЛЬНУЮ СТРУКТУРУ
+    // КОП�?РОВАТЬ ДАННЫЕ В ГЛОБАЛЬНУЮ СТРУКТУРУ
     can_rx_msg.id = rxHeader.Identifier;
     can_rx_msg.dlc = rxHeader.DataLength >> 16;
     memcpy(can_rx_msg.data, data, 8);
     
-    // УСТАНОВИТЬ ФЛАГ
+    // УСТАНОВ�?ТЬ ФЛАГ
     can_rx_pending = 1;
 }
 
