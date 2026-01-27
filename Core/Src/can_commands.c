@@ -259,10 +259,10 @@ void enter_hi_impedance_mode(void)
     HAL_GPIO_Init(GPIOA, &GPIO_InitStruct);
     my_printf("[HI-Z] PA8 (FL) → INPUT\n");
     
-    // PA5 (TIM2_CH1) - FR
-    GPIO_InitStruct.Pin = GPIO_PIN_5;
+    // PA15 (TIM2_CH1) - FR ← ИЗМЕНЕНО!
+    GPIO_InitStruct.Pin = GPIO_PIN_15;  // ← PA15 вместо PA5
     HAL_GPIO_Init(GPIOA, &GPIO_InitStruct);
-    my_printf("[HI-Z] PA5 (FR) → INPUT\n");
+    my_printf("[HI-Z] PA15 (FR) → INPUT\n");
     
     // PA6 (TIM3_CH1) - RL
     GPIO_InitStruct.Pin = GPIO_PIN_6;
@@ -283,7 +283,7 @@ void enter_hi_impedance_mode(void)
     system_switch_mode(MODE_HI_IMPEDANCE);
     
     my_printf("[HI-Z] ✓ HI-IMPEDANCE active - safe for external signals\n");
-    my_printf("[HI-Z] ✓ PA5 (FR) controlled by external generator via SSR\n");
+    my_printf("[HI-Z] ✓ PA15 (FR) controlled by external generator via SSR\n");
     my_printf("[HI-Z] ======================================\n\n");
 }
 
@@ -311,11 +311,11 @@ void exit_hi_impedance_mode(void)
     HAL_GPIO_Init(GPIOA, &GPIO_InitStruct);
     my_printf("[HI-Z] PA8 (FL) → AF2 (TIM1_CH1)\n");
     
-    // PA5 (TIM2_CH1) - AF1
-    GPIO_InitStruct.Pin = GPIO_PIN_5;
+    // PA15 (TIM2_CH1) - AF1 ← ИЗМЕНЕНО!
+    GPIO_InitStruct.Pin = GPIO_PIN_15;  // ← PA15 вместо PA5
     GPIO_InitStruct.Alternate = GPIO_AF1_TIM2;
     HAL_GPIO_Init(GPIOA, &GPIO_InitStruct);
-    my_printf("[HI-Z] PA5 (FR) → AF1 (TIM2_CH1)\n");
+    my_printf("[HI-Z] PA15 (FR) → AF1 (TIM2_CH1)\n");
     
     // PA6 (TIM3_CH1) - AF2
     GPIO_InitStruct.Pin = GPIO_PIN_6;

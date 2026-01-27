@@ -277,17 +277,21 @@ void set_new_speeds(int vFLrpm, int vFRrpm, int vRLrpm, int vRRrpm, whl_chnl *wh
         update_wheel_seamless(TIM1, vFLrpm, whl_arr[numFL]);
     }
     
-    if (vFRrpm != whl_arr[numFR]->prev_speed) {
-        if (vFRrpm < 0x3F) {
-            TIM2->CR1 &= ~TIM_CR1_CEN;
-        } else {
-            TIM2->CR1 |= TIM_CR1_CEN;
-            uint32_t period = calculete_period_only(vFRrpm);
-            TIM2->CR1 |= TIM_CR1_ARPE;
-            TIM2->ARR = period;
-        }
-        whl_arr[numFR]->prev_speed = vFRrpm;
+if (vFRrpm != whl_arr[numFR]->prev_speed) {
+    if (vFRrpm < 0x3F) {
+        TIM2->CR1 &= ~TIM_CR1_CEN;
+        // ← ДОБАВИТЬ:
+        g_system_state.channel_mask &= ~(1 << 1);  // Бит 1 = FR (TIM2)
+    } else {
+        TIM2->CR1 |= TIM_CR1_CEN;
+        // ← И ЗДЕСЬ:
+        g_system_state.channel_mask |= (1 << 1);   // Включить FR
+        uint32_t period = calculete_period_only(vFRrpm);
+        TIM2->CR1 |= TIM_CR1_ARPE;
+        TIM2->ARR = period;
     }
+    whl_arr[numFR]->prev_speed = vFRrpm;
+}
     
     if (vRLrpm != whl_arr[numRL]->prev_speed) {
         update_wheel_seamless(TIM3, vRLrpm, whl_arr[numRL]);
@@ -1069,7 +1073,7 @@ static void MX_GPIO_Init(void)
   HAL_GPIO_WritePin(GPIOA, EXT_LED_Pin|tim3_out_Pin|tim1_out_Pin, GPIO_PIN_RESET);
 
   /*Configure GPIO pin Output Level */
-  HAL_GPIO_WritePin(SOLID_RELAY_CONTROL_GPIO_Port, SOLID_RELAY_CONTROL_Pin, GPIO_PIN_SET);
+  HAL_GPIO_WritePin(SOLID_RELAY_CONTROL_GPIO_Port, SOLID_RELAY_CONTROL_Pin, GPIO_PIN_RESET);
 
   /*Configure GPIO pin Output Level */
   HAL_GPIO_WritePin(LED_Blue_GPIO_Port, LED_Blue_Pin, GPIO_PIN_RESET);
