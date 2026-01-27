@@ -29,7 +29,6 @@
 
 #include "system_modes.h"
 #include "can_commands.h"  
-#include "analog_follower.h"
 
 /* USER CODE END Includes */
 
@@ -592,12 +591,15 @@ while (1) {
             int vRLrpm = ((uint16_t)canRX[4] << 8) | canRX[5];
             int vRRrpm = ((uint16_t)canRX[6] << 8) | canRX[7];
             
-            // Устанавливаем скорости - БЫСТРО
+            // Устанавливаем скорости
             set_new_speeds(vFLrpm, vFRrpm, vRLrpm, vRRrpm, whl_arr);
             
-            // Обновляем LED активность
+            // === КЛЮЧЕВОЙ МОМЕНТ: включаем флаг что RPM активен ===
+            g_system_state.rpm_mode_active = 1;
+            
+            // Управляем LED через это
             can_active_receiving = 1;
-            recievingcounger = 4;  // 4 x 100ms = 400ms мигания
+            recievingcounger = 4;  // 4 × 100ms = 400ms
             
             // Обновляем время последней команды
             g_system_state.last_can_command_time = HAL_GetTick();
@@ -606,9 +608,6 @@ while (1) {
     
     // ===== Обработка по режимам =====
     switch(g_system_state.current_mode) {
-        case MODE_ANALOG_FOLLOW:
-            analog_follower_process();
-            break;
         default:
             break;
     }
@@ -1119,14 +1118,13 @@ void update_system_indicators(void)
 {
     static uint32_t last_update = 0;
     uint32_t current_time = HAL_GetTick();
-    
-    // Обновляем не чаще чем каждые 10 мс
+
     if(current_time - last_update < 10) {
         return;
     }
     last_update = current_time;
-    
-    // Обновление LED индикации
+
+    // LED индикация
     handle_mode_led_indication();
 }
 
@@ -1136,67 +1134,96 @@ void update_system_indicators(void)
 
 void handle_mode_led_indication(void)
 {
-    uint32_t interval_ms = 0;
     uint32_t current_time = HAL_GetTick();
     
     switch(g_system_state.current_mode) {
+        
         case MODE_BOOT:
-            interval_ms = 100;  // 5 Гц
-            break;
+            // BOOT режим: одна вспышка 1500ms, потом выключен
+            if(!g_system_state.led_boot_flashed) {
+                // Первый раз включаем LED
+                HAL_GPIO_WritePin(GPIOA, EXT_LED_Pin, GPIO_PIN_RESET);  // ON
+                g_system_state.led_boot_start_time = current_time;
+                g_system_state.led_boot_flashed = 1;
+            }
+            
+            // Проверяем прошло ли 1500ms
+            if(current_time - g_system_state.led_boot_start_time >= 1500) {
+                // Выключаем LED и больше не трогаем в BOOT режиме
+                HAL_GPIO_WritePin(GPIOA, EXT_LED_Pin, GPIO_PIN_SET);  // OFF
+            }
+            return;  // ← ВАЖНО: не обрабатываем дальше!
             
         case MODE_RPM_DYNAMIC:
-            // LED управляется через can_active_receiving в TIM8
-            // Н�?ЧЕГО НЕ ДЕЛАЕМ ЗДЕСЬ
+            // LED управляется через can_active_receiving в main loop
+            // НЕ МИГАЕМ, пока нет данных
+            if(!g_system_state.rpm_mode_active) {
+                // Нет данных - LED горит постоянно (OFF)
+                HAL_GPIO_WritePin(GPIOA, EXT_LED_Pin, GPIO_PIN_SET);
+                return;
+            }
+            // Данные есть - LED управляется через recievingcounger в TIM8
             return;
             
         case MODE_FIXED_FREQUENCY:
-            interval_ms = 500;  // 1 Гц
-            break;
-            
-        case MODE_PWM:
-            interval_ms = 1000;  // 0.5 Гц
-            break;
-            
-        case MODE_ANALOG_FOLLOW:
-            if(g_system_state.analog_signal_present) {
-                interval_ms = 250;  // 2 Гц (сигнал есть)
-            } else {
-                // Постоянно горит (нет сигнала)
-                HAL_GPIO_WritePin(GPIOA, EXT_LED_Pin, GPIO_PIN_RESET);
-                return;
+            // Медленное мигание 1 Hz (500ms период)
+            {
+                uint32_t interval_ms = 500;
+                if(current_time - g_system_state.led_last_toggle_time >= interval_ms) {
+                    g_system_state.led_state = !g_system_state.led_state;
+                    g_system_state.led_last_toggle_time = current_time;
+                    
+                    if(g_system_state.led_state) {
+                        HAL_GPIO_WritePin(GPIOA, EXT_LED_Pin, GPIO_PIN_RESET);  // ON
+                    } else {
+                        HAL_GPIO_WritePin(GPIOA, EXT_LED_Pin, GPIO_PIN_SET);    // OFF
+                    }
+                }
             }
-            break;
+            return;
             
         case MODE_HI_IMPEDANCE:
-            // Медленное мигание в Hi-Z режиме (0.2 Гц = 5 секунд период)
-            interval_ms = 2500;  // 0.2 Гц
-            break;
+            // Очень медленное мигание 0.2 Hz (2500ms период)
+            {
+                uint32_t interval_ms = 2500;
+                if(current_time - g_system_state.led_last_toggle_time >= interval_ms) {
+                    g_system_state.led_state = !g_system_state.led_state;
+                    g_system_state.led_last_toggle_time = current_time;
+                    
+                    if(g_system_state.led_state) {
+                        HAL_GPIO_WritePin(GPIOA, EXT_LED_Pin, GPIO_PIN_RESET);  // ON
+                    } else {
+                        HAL_GPIO_WritePin(GPIOA, EXT_LED_Pin, GPIO_PIN_SET);    // OFF
+                    }
+                }
+            }
+            return;
             
         case MODE_DISABLED:
+            // LED выключен
             HAL_GPIO_WritePin(GPIOA, EXT_LED_Pin, GPIO_PIN_SET);
             return;
             
         case MODE_ERROR:
-            interval_ms = 50;  // 10 Гц
-            break;
+            // Быстрое мигание 10 Гц (50ms период)
+            {
+                uint32_t interval_ms = 50;
+                if(current_time - g_system_state.led_last_toggle_time >= interval_ms) {
+                    g_system_state.led_state = !g_system_state.led_state;
+                    g_system_state.led_last_toggle_time = current_time;
+                    
+                    if(g_system_state.led_state) {
+                        HAL_GPIO_WritePin(GPIOA, EXT_LED_Pin, GPIO_PIN_RESET);  // ON
+                    } else {
+                        HAL_GPIO_WritePin(GPIOA, EXT_LED_Pin, GPIO_PIN_SET);    // OFF
+                    }
+                }
+            }
+            return;
             
         default:
             HAL_GPIO_WritePin(GPIOA, EXT_LED_Pin, GPIO_PIN_SET);
             return;
-    }
-    
-    // Мигание
-    if(interval_ms > 0) {
-        if(current_time - g_system_state.led_last_toggle_time >= interval_ms) {
-            g_system_state.led_state = !g_system_state.led_state;
-            g_system_state.led_last_toggle_time = current_time;
-            
-            if(g_system_state.led_state) {
-                HAL_GPIO_WritePin(GPIOA, EXT_LED_Pin, GPIO_PIN_RESET);
-            } else {
-                HAL_GPIO_WritePin(GPIOA, EXT_LED_Pin, GPIO_PIN_SET);
-            }
-        }
     }
 }
 
@@ -1222,13 +1249,6 @@ void check_system_health(void)
         
         if(time_since_last_cmd > 10000) { // 10 секунд нет команд
             printf("[WARNING] No CAN commands for %lu seconds\n", time_since_last_cmd / 1000);
-            
-            // Если в фиксированном режиме или Ш�?М - это нормально
-            // Если в аналоговом режиме - возможно, пропал сигнал
-            if(g_system_state.current_mode == MODE_ANALOG_FOLLOW) {
-                g_system_state.analog_signal_present = 0;
-                printf("[WARNING] Analog signal lost?\n");
-            }
         }
     }
     
@@ -1363,14 +1383,6 @@ void process_can_in_main(void)
     }
 }
 
-
-// Обработчик IC для TIM8
-void HAL_TIM_IC_CaptureCallback(TIM_HandleTypeDef *htim)
-{
-   if(htim->Instance == TIM8) {
-       analog_follower_capture_callback();
-   }
-}
 
 /* USER CODE END 4 */
 
