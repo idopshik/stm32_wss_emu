@@ -1,308 +1,203 @@
-# Python GUI Adaptation Brief - wss_emu v3
+WSS EMULATOR v4 - ИСПРАВЛЕННЫЕ ТЕХНИЧЕСКИЕ ТРЕБОВАНИЯ
+1. ОБЩИЕ ПРИНЦИПЫ
+Назначение: Устройство эмулирует сигналы ABS-датчиков четырёх колёс на основе CAN-сообщений о скорости вращения.
 
-## STATUS (ID 0x006) - Структура и расшифровка
+Аппаратные особенности:
 
-### Формат статус-сообщения (8 байт):
-```
-Byte 0: Режим работы
-  0x01 = MODE_RPM_DYNAMIC
-  0x02 = MODE_FIXED_FREQUENCY
-  0x10 = MODE_HI_IMPEDANCE
-  0x00 = MODE_DISABLED
+TIM1 (FL), TIM3 (RL), TIM4 (RR): 16-битные таймеры, переключение GPIO в прерывании
 
-Byte 1: Channel mask (активные колёса)
-  Бит 0 = FL (TIM1)
-  Бит 1 = FR (TIM2)
-  Бит 2 = RL (TIM3)
-  Бит 3 = RR (TIM4)
-  Пример: 0x0F = все 4 активны
+TIM2 (FR): 32-битный таймер, аппаратный toggle на PA15
 
-Bytes 2-3: Частота × 10 (uint16_t LE)
-  Только для MODE_FIXED_FREQUENCY!
-  Пример: 0x2710 = 10000 (значит 1000.0 Hz)
-  Диапазон: 0.1 Hz - 6553.5 Hz
+Все выходы: Режим TOGGLE (выходная частота = частота таймера ÷ 2)
 
-Byte 4: Флаги состояния
-  Бит 0: Analog signal (не используется, всегда 0)
-  Бит 1: Hi-Z mode active (1 = да, 0 = нет)
+PA15 (FR): Основной канал для внешнего тестирования через SSR (PB10)
 
-Bytes 5-6: Uptime в секундах (uint16_t LE)
-  Время работы системы с момента старта
+2. СТАТУСНОЕ СООБЩЕНИЕ (ID 0x006)
+Формат (8 байт):
 
-Byte 7: Reserved (всегда 0)
-```
+Байт	Назначение	Описание
+0	Режим работы	0x01=RPM, 0x02=FIXED, 0x10=HI-Z
+1	Channel mask	Битовая маска активных каналов (0x00-0x0F)
+2-3	Частота ×10	Выходная_частота_Гц × 10 (только FIXED)
+4	Флаги	Бит 1 = Hi-Z active (остальные 0)
+5-6	Uptime (сек)	Время работы (uint16_t LE)
+7	Reserved	Всегда 0x00
+Особенности:
 
----
+В RPM режиме байты 2-3 = 0x0000 (частота не рассчитывается)
 
-## MODE_RPM_DYNAMIC (0x01)
+В Hi-Z режиме байты 2-3 = 0x0000 (частота не используется)
 
-### Команда входа:
-```
+Примеры статуса:
+
+text
+RPM (активны FL и RL):    01 05 00 00 00 00 9C 00
+FIXED 1000Hz ALL_FOUR:    02 0F 20 4E 00 00 9C 00  (баг: показывает 2000.0Hz)
+Hi-Z режим:               10 0F 00 00 02 00 9C 00
+3. РЕЖИМ RPM_DYNAMIC (0x01)
+3.1 Команда активации
+text
 CAN ID: 0x004
 Data: 01 FF 00 00 00 00 00 00
-  [0x01] = CMD_SET_RPM_MODE
-  [0xFF] = All wheels
-```
+3.2 Входные данные (CAN ID 0x003)
+Формат: [FL_H FL_L FR_H FR_L RL_H RL_L RR_H RR_L]
 
-### Входные данные (постоянно, каждые ~1ms):
-```
-CAN ID: 0x003
-Data: [FL_H] [FL_L] [FR_H] [FR_L] [RL_H] [RL_L] [RR_H] [RR_L]
-  Каждое значение = uint16_t BIG-ENDIAN
-  Примеры:
-    00 00 = выключено (< 0x3F = 63)
-    13 88 = 5000 RPM
-    27 10 = 10000 RPM
-```
+16-битные значения Big-Endian
 
-### Статус в RPM режиме:
-```
-Rx (0x006): 01 0F 00 00 00 00 9C 00
-  [01] = MODE_RPM_DYNAMIC
-  [0F] = Channel mask (зависит от того какие RPM приходят)
-  [00 00] = частота НЕ используется в RPM режиме!
-  [00] = флаги (обычно 0)
-  [9C 00] = uptime в секундах (156 сек)
-```
+Коэффициент из .dbc: real_RPM = raw_value × 0.02
 
-⚠️ **ВАЖНО в RPM режиме:**
-- Bytes 2-3 (частота) **ВСЕГДА = 0x0000** (не используется)
-- Статус обновляется динамически в зависимости от приходящих RPM
-- Channel mask отражает какие колёса активны (RPM > 0x3F)
+Порог активности: raw_value > 0x3F (63 десятичных)
 
----
+3.3 ФИЗИЧЕСКАЯ ЛОГИКА ЭМУЛЯЦИИ (ПРАВИЛЬНАЯ)
+text
+ABS датчик: 48 зубьев × 2 импульса/зуб = 96 импульсов/оборот
 
-## MODE_FIXED_FREQUENCY (0x02)
+Частота сигнала НА ВЫХОДЕ GPIO (после деления на 2):
+f_signal_Hz = real_RPM × 96 / 60 = real_RPM × 1.6
 
-### Команда входа:
-```
+Объединённая формула: f_signal_Hz = raw_value × 0.02 × 1.6 = raw_value × 0.032
+
+Частота ТАЙМЕРА (в 2 раза выше из-за TOGGLE):
+f_timer_Hz = f_signal_Hz × 2 = raw_value × 0.064
+3.4 АЛГОРИТМ РАСЧЁТА ТАЙМЕРОВ (ПРАВИЛЬНЫЙ)
+Общий делитель:
+
+text
+Total_Divider = APB1_CLK / f_timer_Hz
+              = 150,000,000 / (raw_value × 0.064)
+              = 2,343,750,000 / raw_value  ← КОНСТАНТА В 2 РАЗА МЕНЬШЕ!
+1. TIM2 (FR, 32-битный):
+
+text
+PSC = 12 (ФИКСИРОВАННЫЙ)
+ARR = Total_Divider / (PSC + 1) - 1
+    = 2,343,750,000 / (raw_value × 13) - 1
+2. TIM1/TIM3/TIM4 (FL/RL/RR, 16-битные):
+
+text
+if (raw_value < 4274) {
+    PSC = 1200
+} else {
+    PSC = 24
+}
+ARR = Total_Divider / (PSC + 1) - 1
+if (ARR > 65535) ARR = 65535
+3.5 ПРОВЕРОЧНЫЙ РАСЧЁТ
+text
+raw_value = 1000
+f_signal = 1000 × 0.032 = 32 Гц (на выходе GPIO)
+f_timer = 32 × 2 = 64 Гц (частота таймера)
+
+Total_Divider = 2,343,750,000 / 1000 = 2,343,750
+
+Для TIM2 (PSC=12):
+ARR = 2,343,750 / 13 - 1 = 180,288 - 1 = 180,287
+Проверка: f_timer = 150M / (13 × 180,288) ≈ 64 Гц ✓
+
+Для TIM1 (PSC=24):
+ARR = 2,343,750 / 25 - 1 = 93,750 - 1 = 93,749
+Проверка: f_timer = 150M / (25 × 93,750) = 64 Гц ✓
+4. РЕЖИМ FIXED_FREQUENCY (0x02)
+4.1 Команда установки частоты
+text
 CAN ID: 0x004
-Data: 02 [MASK] [Freq_LE_4bytes] 00 00
-```
+Data: 02 [MASK] [Freq_Timer_LE_4bytes] 00 00
 
-### Два подрежима:
+MASK:
+  0x0F = ALL_FOUR  (все 4 канала, 16-битная точность)
+  0x02 = ONLY_FR   (только TIM2, 32-битная точность)
 
-#### ALL_FOUR (маска 0x0F)
-```
-Отправляемая команда:
-  02 0F [freq_mhz_LE] 00 00
-  
-Пример: 999.935 Hz выходная частота
-  (таймер = 1999.87 Hz с учётом toggle)
-  02 0F FE 83 1E 00 00 00
-  
-Статус ответ:
-  02 0F 84 27 00 00 9C 00
-    [02] = MODE_FIXED_FREQUENCY
-    [0F] = все 4 активны
-    [84 27] = 10116 (частота × 10) = 1011.6 Hz
-    [00] = флаги
-    [9C 00] = uptime
-```
+Freq_Timer: частота ТАЙМЕРА в миллигерцах (uint32_t LE)
+           = Желаемая_выходная_частота_Гц × 2 × 1000
+4.2 Примеры
+text
+Для 1000 Гц выходной:
+  Частота таймера = 1000 × 2 = 2000 Гц
+  В mHz = 2000 × 1000 = 2,000,000 mHz
+  Hex: 0x001E8480
+  Little-endian: 80 84 1E 00
 
-#### ONLY_FR (маска 0x02)
-```
-Отправляемая команда:
-  02 02 [freq_mhz_LE] 00 00
-  
-Пример: 999.935 Hz выходная частота
-  (таймер = 1999.87 Hz с учётом toggle)
-  02 02 FE 83 1E 00 00 00
-  
-Статус ответ:
-  02 02 84 27 00 00 9C 00
-    [02] = MODE_FIXED_FREQUENCY
-    [02] = ТОЛЬКО FR (TIM2) активен
-    [84 27] = 10116 (частота × 10) = 1011.6 Hz
-    [00] = флаги
-    [9C 00] = uptime
-    
-ПРИМЕЧАНИЕ: TIM1, TIM3, TIM4 ВЫКЛЮЧЕНЫ!
-```
+Команда ALL_FOUR:  02 0F 80 84 1E 00 00 00
+Команда ONLY_FR:   02 02 80 84 1E 00 00 00
+4.3 Статус FIXED режима (БАГ)
+Текущий код:
 
-⚠️ **КРИТИЧНО:**
-- ALL_FOUR использует 16-бит таймеры, точность ~0.01 Hz
-- ONLY_FR использует 32-бит TIM2, точность ~0.001 Hz
-- Все таймеры в TOGGLE режиме: выходная freq = таймер / 2
-- Поэтому **отправляемая частота всегда в 2 раза больше желаемой**!
+c
+freq_x10 = (uint16_t)(g_system_state.target_frequency_mhz / 100);
+// target_frequency_mhz = 2,000,000 (частота таймера в mHz)
+// /100 = 20,000 (0x4E20) = 2000.0 Гц (частота таймера ×10)
+Должно быть:
 
----
-
-## MODE_HI_IMPEDANCE (0x10)
-
-### Команда входа:
-```
+c
+freq_x10 = (uint16_t)(g_system_state.target_frequency_mhz / 200);
+// /200 = 10,000 (0x2710) = 1000.0 Гц (выходная частота ×10)
+5. РЕЖИМ HI_IMPEDANCE (0x10)
+5.1 Команда активации
+text
 CAN ID: 0x004
 Data: 06 00 00 00 00 00 00 00
-  [0x06] = CMD_SET_HI_IMPEDANCE
-```
+5.2 Действия устройства
+Остановка всех таймеров (TIM1-4 CR1.CEN=0)
 
-### Статус в Hi-Z режиме:
-```
-Rx (0x006): 10 0F 00 00 02 00 9C 00
-  [10] = MODE_HI_IMPEDANCE
-  [0F] = Channel mask (не меняется)
-  [00 00] = частота = 0
-  [02] = Бит 1 SET (Hi-Z mode active = 1)
-  [9C 00] = uptime
-```
+Перевод GPIO в INPUT mode (Hi-Z):
 
-⚠️ **ВАЖНО в Hi-Z:**
-- PB10 (SSR) установлен в HIGH
-- PA15 (FR) переводится в INPUT (Hi-Z)
-- Флаг byte[4] & 0x02 = Hi-Z active indicator
-- Выход из Hi-Z: отправить любую другую команду (0x01, 0x02)
+PA8 (FL), PA15 (FR), PA6 (RL), PB6 (RR) → INPUT
 
----
+Активация SSR: PB10 = HIGH
 
-## Python GUI - Что нужно обновить
+Установка режима: MODE_HI_IMPEDANCE, Hi-Z active = 1
 
-### 1. **Парсинг Status сообщения (ID 0x006)**
-```python
-def parse_status(data):
-    """data = bytes из CAN сообщения (8 байт)"""
-    mode = data[0]
-    channel_mask = data[1]
-    freq_x10 = struct.unpack('<H', data[2:4])[0]  # Little-endian!
-    flags = data[4]
-    uptime = struct.unpack('<H', data[5:7])[0]
-    
-    # Режимы
-    mode_name = {
-        0x01: "RPM_DYNAMIC",
-        0x02: "FIXED_FREQUENCY",
-        0x10: "HI_IMPEDANCE",
-        0x00: "DISABLED"
-    }[mode]
-    
-    # Флаги
-    hi_z_active = (flags & 0x02) != 0
-    
-    # Частота (только для FIXED_FREQUENCY!)
-    if mode == 0x02:
-        freq_hz = freq_x10 / 10.0
-    else:
-        freq_hz = 0  # RPM и Hi-Z не используют это поле
-    
-    return {
-        'mode': mode_name,
-        'channels': channel_mask,
-        'frequency_hz': freq_hz,
-        'hi_z_active': hi_z_active,
-        'uptime_sec': uptime
-    }
-```
+5.3 Выход из Hi-Z
+Любая другая команда (RPM, FIXED) отключает Hi-Z:
 
-### 2. **Отправка FIXED_FREQUENCY команд**
+SSR: PB10 = LOW
 
-⚠️ **ПОМНИ: все таймеры в toggle режиме!**
+GPIO → Alternate Function для таймеров
 
-```python
-def send_fixed_all_four(bus, desired_output_hz):
-    """desired_output_hz = желаемая частота на выходе"""
-    timer_freq = desired_output_hz * 2  # Toggle поделит пополам!
-    freq_mhz = int(timer_freq * 1000)
-    
-    data = bytearray(8)
-    data[0] = 0x02
-    data[1] = 0x0F  # ALL_FOUR
-    data[2:6] = struct.pack('<I', freq_mhz)
-    
-    msg = can.Message(arbitration_id=0x004, data=data)
-    bus.send(msg)
+Восстановление предыдущего режима
 
-def send_fixed_only_fr(bus, desired_output_hz):
-    """desired_output_hz = желаемая частота на выходе"""
-    timer_freq = desired_output_hz * 2  # Toggle поделит пополам!
-    freq_mhz = int(timer_freq * 1000)
-    
-    data = bytearray(8)
-    data[0] = 0x02
-    data[1] = 0x02  # ONLY_FR
-    data[2:6] = struct.pack('<I', freq_mhz)
-    
-    msg = can.Message(arbitration_id=0x004, data=data)
-    bus.send(msg)
-```
+6. КРИТИЧЕСКИЕ ОШИБКИ В ТЕКУЩЕМ КОДЕ
+6.1 RPM режим
+Ошибка: В формуле calculete_prsc_and_perio() используется неверная константа
 
-### 3. **UI - Слайдеры для двух режимов**
+c
+// Сейчас в коде (main.c):
+tmp = (APB1_CLK / (val * 0.02 * 1.6 * (arr[0] + 1))) - 1;
+// Эквивалентно: 150M / (val × 0.032 × (PSC+1))
 
-```
-[FIXED FREQUENCY TAB]
+// Должно быть:
+uint64_t total_divider = 2343750000ULL / val;  // 2,343,750,000
+tmp = total_divider / (arr[0] + 1) - 1;
+6.2 FIXED режим
+Ошибка: Статус возвращает частоту таймера вместо выходной
 
-┌─────────────────────────────────────┐
-│ Select Mode:                        │
-│  ○ ALL_FOUR (все 4 колеса)         │
-│  ○ ONLY_FR (максимум точности)     │
-├─────────────────────────────────────┤
-│ Frequency: [========●====] 999.935  │
-│ Range: 0.1 - 4500 Hz                │
-├─────────────────────────────────────┤
-│ [SEND]  Status: ✓ ALL_FOUR active   │
-│         Actual: 999.94 Hz           │
-│         Error: 0.005 Hz (0.0005%)   │
-└─────────────────────────────────────┘
-```
+c
+// В can_commands.c, send_system_status():
+freq_x10 = (uint16_t)(g_system_state.target_frequency_mhz / 100);
+// Должно быть:
+freq_x10 = (uint16_t)(g_system_state.target_frequency_mhz / 200);
+6.3 Проверочная точка 4274
+При raw_value = 4274:
 
-### 4. **Status Display**
+text
+Правильный расчёт:
+Total_Divider = 2,343,750,000 / 4274 ≈ 548,468
+Для PSC = 24: ARR = 548,468 / 25 - 1 ≈ 21,938
 
-```
-Mode: FIXED_FREQUENCY
-├─ Wheel mask: 0x0F (FL FR RL RR)
-├─ Target: 999.935 Hz
-├─ Actual: 999.94 Hz
-├─ Error: 0.0005%
-├─ Hi-Z: INACTIVE
-└─ Uptime: 156 sec
-```
-
----
-
-## Контрольный список
-
-- [ ] Парсер status сообщения обновлён
-- [ ] ALL_FOUR и ONLY_FR кнопки добавлены
-- [ ] Частота умножается на 2 при отправке (toggle компенсация)
-- [ ] Bytes 2-3 status игнорируются в RPM режиме
-- [ ] Hi-Z индикатор показывает флаг byte[4] & 0x02
-- [ ] Channel mask обновляется динамически в RPM
-- [ ] Uptime отображается корректно (uint16_t LE)
-
----
-
-## Примеры тестирования
-
-### Test 1: RPM режим
-```
-1. Отправить 0x01 (RPM mode)
-2. Отправлять RPM данные (CAN ID 0x003)
-3. Статус должен показать MODE_RPM, freq = 0
-4. Channel mask должен меняться в зависимости от RPM
-```
-
-### Test 2: FIXED ALL_FOUR
-```
-1. Отправить 02 0F FE 83 1E 00 00 00 (999.935 Hz)
-2. Статус: режим FIXED_FREQUENCY, mask 0x0F, freq ~1000 Hz
-3. Осциллограф: все 4 вывода ~999.935 Hz
-```
-
-### Test 3: FIXED ONLY_FR
-```
-1. Отправить 02 02 FE 83 1E 00 00 00 (999.935 Hz)
-2. Статус: режим FIXED_FREQUENCY, mask 0x02, freq ~1000 Hz
-3. Осциллограф: только PA15 работает, остальные OFF
-```
-
-### Test 4: Hi-Z режим
-```
-1. Отправить 06 00 00 00 00 00 00 00
-2. Статус: режим HI_IMPEDANCE, флаг Hi-Z = active
-3. Проверить PB10 = HIGH, PA15 = Hi-Z (INPUT)
-```
-
----
-
-**Версия:** 3.1  
-**Дата:** Январь 2025  
-**Статус:** Ready for implementation
+Текущий код даёт PSC = 1200 (неверно для этого значения!)
+7. ИСПРАВЛЕННЫЕ ФОРМУЛЫ ПРЕОБРАЗОВАНИЯ
+7.1 RPM → Частота
+text
+Выходная частота GPIO:   f_signal_Hz = raw_RPM × 0.032
+Частота таймера:         f_timer_Hz = raw_RPM × 0.064
+Общий делитель:          Total_Divider = 2,343,750,000 / raw_RPM
+7.2 FIXED → Команда
+text
+Желаемая выходная → команда: freq_mhz = output_Hz × 2 × 1000
+Статус → реальная выходная:  output_Hz = status_freq / 10 (после исправления бага)
+7.3 Регистры таймера
+text
+(PSC + 1) × (ARR + 1) = Total_Divider = APB1_CLK / f_timer_Hz
+Версия документа: 4.1 (исправленная)
+Статус: Требует исправления констант и багов в коде
+Дата: 2025
