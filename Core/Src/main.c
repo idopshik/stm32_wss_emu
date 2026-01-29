@@ -43,6 +43,9 @@
 #define numRL 2
 #define numRR 3
 
+// ДОБАВИТЬ КОНСТАНТУ ДЛЯ РАСЧЕТА RPM (согласно техтребованиям)
+#define TOTAL_DIVIDER_CONST 2343750000ULL  // 2,343,750,000 = 150M / 0.064
+
 FDCAN_TxHeaderTypeDef TxHeader1;
 FDCAN_RxHeaderTypeDef RxHeader1;
 
@@ -174,16 +177,27 @@ void PrintArray(uint8_t *data_arr)
 
 uint32_t calculete_period_only(int val)
 {
-    // For 32bit timer
-    float factor = 0.02;
-    return (APB1_CLK / (val * factor * MinutTeethFactor * (12 + 1))) - 1;
+    // For 32-bit timer TIM2 с фиксированным PSC=12
+    // Согласно техтребованиям: PSC = 12 (ФИКСИРОВАННЫЙ)
+    // ARR = Total_Divider / (PSC + 1) - 1
+    
+    // Защита от деления на 0
+    if (val == 0) {
+        val = 1;
+    }
+    
+    // Вычисляем по правильной формуле
+    uint64_t total_divider = TOTAL_DIVIDER_CONST / val;
+    uint32_t arr = (uint32_t)(total_divider / 13) - 1;  // PSC+1 = 12+1 = 13
+    
+    return arr;
 }
 
 int calculete_prsc_and_perio(int val, int *arr, whl_chnl *whl_arr[], int wheelnum)
 {
-    float factor = 0.02;
     int newpresc;
 
+    // Определяем PSC согласно техтребованиям
     if (val < 4274) {
         newpresc = 1200;
     }
@@ -191,34 +205,45 @@ int calculete_prsc_and_perio(int val, int *arr, whl_chnl *whl_arr[], int wheelnu
         newpresc = 24;
     }
 
-    // ВАЖНО: arr[0] - текущий PSC, arr[1] - новый PSC
+    // arr[0] - текущий PSC, arr[1] - новый PSC
     arr[0] = whl_arr[wheelnum]->prev_psc;
-    arr[1] = newpresc;  // ДОБАВ�?ТЬ ЭТУ СТРОЧКУ!
+    arr[1] = newpresc;
 
+    // ВАЖНО: Используем правильную формулу из техтребований
+    // f_timer_Hz = raw_value × 0.064
+    // Total_Divider = 2,343,750,000 / raw_value
+    // ARR = Total_Divider / (PSC + 1) - 1
+    
+    uint64_t total_divider;
     uint32_t tmp;
-    tmp = (APB1_CLK / (val * factor * MinutTeethFactor * (arr[0] + 1))) - 1;
+    
+    // Защита от деления на 0
+    if (val == 0) {
+        val = 1;  // минимальное значение
+    }
+    
+    // Вычисляем общий делитель по правильной формуле
+    total_divider = TOTAL_DIVIDER_CONST / val;
+    
+    // Текущий ARR с текущим PSC
+    tmp = (uint32_t)(total_divider / (arr[0] + 1)) - 1;
     if (tmp > 65536) {
         tmp = 65535;
     }
     arr[2] = (int)tmp;
 
-    if (arr[0] != arr[1]) {
-        tmp = ((APB1_CLK / (val * factor * MinutTeethFactor * (newpresc + 1))) - 1);
-        if (tmp > 65536) {
-            tmp = 65535;
-        }
-        arr[3] = (int)tmp;
+    // Новый ARR с новым PSC
+    tmp = (uint32_t)(total_divider / (newpresc + 1)) - 1;
+    if (tmp > 65536) {
+        tmp = 65535;
     }
-    else {
-        arr[3] = arr[2];
-    }
+    arr[3] = (int)tmp;
 
-    // Сохраняем новый PSC
+    // Сохраняем новый PSC для будущих расчетов
     whl_arr[wheelnum]->prev_psc = newpresc;
 
     return 0;
 }
-
 void update_wheel_seamless(TIM_TypeDef* TIMx, int rpm, whl_chnl* wheel)
 {
     if (rpm < 0x3F) {
@@ -278,14 +303,14 @@ void set_new_speeds(int vFLrpm, int vFRrpm, int vRLrpm, int vRRrpm, whl_chnl *wh
     }
     
 if (vFRrpm != whl_arr[numFR]->prev_speed) {
-    if (vFRrpm < 0x3F) {
+    if (vFRrpm < 0x3F) {  // Порог активности 63 (0x3F) как в техтребованиях
         TIM2->CR1 &= ~TIM_CR1_CEN;
-        // ← ДОБАВИТЬ:
         g_system_state.channel_mask &= ~(1 << 1);  // Бит 1 = FR (TIM2)
     } else {
         TIM2->CR1 |= TIM_CR1_CEN;
-        // ← И ЗДЕСЬ:
         g_system_state.channel_mask |= (1 << 1);   // Включить FR
+        
+        // Используем исправленную функцию
         uint32_t period = calculete_period_only(vFRrpm);
         TIM2->CR1 |= TIM_CR1_ARPE;
         TIM2->ARR = period;
@@ -402,6 +427,41 @@ void HAL_TIM_PeriodElapsedCallback(TIM_HandleTypeDef *htim)
         HAL_GPIO_TogglePin(GPIOB, tim4_out_Pin);
     }
 }
+
+void test_rpm_calculation(void)
+{
+    my_printf("\n=== TEST RPM CALCULATION ===\n");
+    
+    // Тест 1: raw_value = 1000 (из техтребований)
+    int test_val = 1000;
+    float f_signal = test_val * 0.032f;      // 32 Гц
+    float f_timer = test_val * 0.064f;       // 64 Гц
+    uint64_t total_divider = TOTAL_DIVIDER_CONST / test_val;  // 2,343,750
+    
+    // Для TIM2 (PSC=12)
+    uint32_t arr_tim2 = (uint32_t)(total_divider / 13) - 1;  // ~180,287
+    
+    // Для 16-битных (PSC=24 т.к. 1000 < 4274? НЕТ! 1000 < 4274 - да!)
+    int psc_16bit = (test_val < 4274) ? 1200 : 24;
+    uint32_t arr_16bit = (uint32_t)(total_divider / (psc_16bit + 1)) - 1;
+    
+    my_printf("Test val=%d:\n", test_val);
+    my_printf("  f_signal=%.1fHz, f_timer=%.1fHz\n", f_signal, f_timer);
+    my_printf("  Total_Divider=%llu\n", total_divider);
+    my_printf("  TIM2: PSC=12, ARR=%lu\n", arr_tim2);
+    my_printf("  TIM1/3/4: PSC=%d, ARR=%lu\n", psc_16bit, arr_16bit);
+    
+    // Тест 2: raw_value = 4274 (граничное значение)
+    test_val = 4274;
+    total_divider = TOTAL_DIVIDER_CONST / test_val;  // ~548,468
+    psc_16bit = (test_val < 4274) ? 1200 : 24;  // Должно быть 24!
+    
+    my_printf("\nBorder val=%d:\n", test_val);
+    my_printf("  Total_Divider=%llu\n", total_divider);
+    my_printf("  PSC should be=%d (>=4274 → 24)\n", psc_16bit);
+}
+
+
 
 /* USER CODE END 0 */
 
@@ -542,6 +602,8 @@ whl_chnl rr_whl_s = {numRR, &htim4, 0, 24, 0, 0, 0, 0, 0, 0};
 
     HAL_GPIO_WritePin(GPIOA, EXT_LED_Pin, GPIO_PIN_SET);
 
+test_rpm_calculation()    # тестовая функция, вызвать при запуске. 
+    
     /* USER CODE BEGIN WHILE */
 // ============================================
 // ГЛАВНЫЙ Ц�?КЛ - ОПТ�?М�?З�?РОВАННЫЙ
