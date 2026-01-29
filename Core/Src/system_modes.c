@@ -34,7 +34,6 @@ void system_init_modes(void)
     my_printf("[SYSTEM] Initializing modes...\n");
     #endif
 
-    g_system_state.pending_hi_z = 0;
     g_system_state.current_mode = MODE_BOOT;
     g_system_state.channel_mask = 0x0F;
     g_system_state.target_frequency_hz = 0;
@@ -57,7 +56,10 @@ void system_init_modes(void)
     
     // Инициализация MODE_BOOT LED (одна вспышка 1500ms)
     g_system_state.led_boot_flashed = 0;
-    g_system_state.led_boot_start_time = 0;
+    g_system_state.led_boot_start_time = HAL_GetTick();
+    
+    // Подготовка к Hi-Z после boot
+    g_system_state.pending_hi_z = 1;
     
     #if DEBUG_SYSTEM
     my_printf("[SYSTEM] Initialized. Mode: %s\n", 

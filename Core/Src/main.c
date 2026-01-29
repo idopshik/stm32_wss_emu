@@ -113,6 +113,8 @@ uint8_t update_led_flag = 0;
 /* USER CODE END PV */
 
 /* Private function prototypes -----------------------------------------------*/
+static void led_blink_pattern(uint32_t current_time, uint32_t interval_ms);
+
 void SystemClock_Config(void);
 static void MX_GPIO_Init(void);
 static void MX_FDCAN1_Init(void);
@@ -135,7 +137,6 @@ void print_timer_status(void);
 
 // Новые функции для работы с режимами
 void update_system_indicators(void);
-void handle_mode_led_indication(void);
 void check_system_health(void);
 
 void test_mode_switching(void);  // Для тестирования через UART
@@ -177,75 +178,91 @@ void PrintArray(uint8_t *data_arr)
 
 uint32_t calculete_period_only(int val)
 {
-    // For 32-bit timer TIM2 с фиксированным PSC=12
-    // Согласно техтребованиям: PSC = 12 (ФИКСИРОВАННЫЙ)
-    // ARR = Total_Divider / (PSC + 1) - 1
-    
-    // Защита от деления на 0
-    if (val == 0) {
+    // Защита от нулевого и отрицательного значения
+    if (val <= 0) {
         val = 1;
+        my_printf("[CALC_PERIOD_TIM2] WARNING: Zero or negative input, using 1\n");
     }
-    
-    // Вычисляем по правильной формуле
+
+    // Максимальное ограничение для предотвращения переполнения
+    if (val > 65535) {
+        val = 65535;
+        my_printf("[CALC_PERIOD_TIM2] WARNING: Input too large, clamped to 65535\n");
+    }
+
     uint64_t total_divider = TOTAL_DIVIDER_CONST / val;
-    uint32_t arr = (uint32_t)(total_divider / 13) - 1;  // PSC+1 = 12+1 = 13
-    
+    uint32_t arr = (uint32_t)(total_divider / 13) - 1;
+
+    my_printf("[CALC_PERIOD_TIM2] Input RPM: %d\n", val);
+    my_printf("[CALC_PERIOD_TIM2] Total Divider: %lu\n", (uint32_t)total_divider);
+    my_printf("[CALC_PERIOD_TIM2] PSC: 12\n");
+    my_printf("[CALC_PERIOD_TIM2] ARR: %lu\n", arr);
+
     return arr;
 }
 
 int calculete_prsc_and_perio(int val, int *arr, whl_chnl *whl_arr[], int wheelnum)
 {
-    int newpresc;
+    my_printf("[EDGE_CASE] ===== INPUT ANALYSIS =====\n");
+    my_printf("[EDGE_CASE] Raw Input RPM: %d\n", val);
+    my_printf("[EDGE_CASE] Wheel Number: %d\n", wheelnum);
 
-    // Определяем PSC согласно техтребованиям
+    // Обработка нулевого и отрицательного значения
+    if (val <= 0) {
+        my_printf("[EDGE_CASE] WARNING: Zero/Negative input. Clamping to 1!\n");
+        val = 1;
+    }
+
+    // Максимальное ограничение
+    if (val > 65535) {
+        my_printf("[EDGE_CASE] WARNING: Input exceeds 16-bit range. Clamping to 65535!\n");
+        val = 65535;
+    }
+
+    // Выбор PSC
+    int newpresc;
     if (val < 4274) {
         newpresc = 1200;
-    }
-    else {
+        my_printf("[EDGE_CASE] PSC selection: 1200 (RPM < 4274)\n");
+    } else {
         newpresc = 24;
+        my_printf("[EDGE_CASE] PSC selection: 24 (RPM >= 4274)\n");
     }
 
-    // arr[0] - текущий PSC, arr[1] - новый PSC
+    // Расчет Total Divider
+    uint64_t total_divider = TOTAL_DIVIDER_CONST / val;
+    
+    // Расчет ARR с новым PSC
+    uint32_t tmp = (uint32_t)(total_divider / (newpresc + 1)) - 1;
+    
+    // Ограничение для 16-битных таймеров
+    if (tmp > 65535) {
+        my_printf("[EDGE_CASE] WARNING: ARR exceeds 16-bit range. Clamping to 65535!\n");
+        tmp = 65535;
+    }
+
+    my_printf("[EDGE_CASE] Total Divider: %lu\n", (uint32_t)total_divider);
+    my_printf("[EDGE_CASE] Selected PSC: %d\n", newpresc);
+    my_printf("[EDGE_CASE] Calculated ARR: %lu\n", tmp);
+    my_printf("[EDGE_CASE] ===== END ANALYSIS =====\n\n");
+
+    // Остальная логика без изменений
     arr[0] = whl_arr[wheelnum]->prev_psc;
     arr[1] = newpresc;
-
-    // ВАЖНО: Используем правильную формулу из техтребований
-    // f_timer_Hz = raw_value × 0.064
-    // Total_Divider = 2,343,750,000 / raw_value
-    // ARR = Total_Divider / (PSC + 1) - 1
-    
-    uint64_t total_divider;
-    uint32_t tmp;
-    
-    // Защита от деления на 0
-    if (val == 0) {
-        val = 1;  // минимальное значение
-    }
-    
-    // Вычисляем общий делитель по правильной формуле
-    total_divider = TOTAL_DIVIDER_CONST / val;
-    
-    // Текущий ARR с текущим PSC
-    tmp = (uint32_t)(total_divider / (arr[0] + 1)) - 1;
-    if (tmp > 65536) {
-        tmp = 65535;
-    }
     arr[2] = (int)tmp;
-
-    // Новый ARR с новым PSC
-    tmp = (uint32_t)(total_divider / (newpresc + 1)) - 1;
-    if (tmp > 65536) {
-        tmp = 65535;
-    }
     arr[3] = (int)tmp;
-
-    // Сохраняем новый PSC для будущих расчетов
     whl_arr[wheelnum]->prev_psc = newpresc;
 
     return 0;
 }
+
+
 void update_wheel_seamless(TIM_TypeDef* TIMx, int rpm, whl_chnl* wheel)
 {
+
+    my_printf("[SEAMLESS] Timer: TIM%d, RPM: %d\n", 
+              wheel->wheel_num + 1, rpm);
+
     if (rpm < 0x3F) {
         TIMx->CR1 &= ~TIM_CR1_CEN;
         wheel->pending_update = 0;
@@ -298,6 +315,11 @@ printf("PSC change pending: %d->%d, ARR: %lu->%d\n",
 }
 
 void set_new_speeds(int vFLrpm, int vFRrpm, int vRLrpm, int vRRrpm, whl_chnl *whl_arr[]) {
+
+
+    my_printf("[SET_SPEEDS] FL: %d, FR: %d, RL: %d, RR: %d\n", 
+               vFLrpm, vFRrpm, vRLrpm, vRRrpm);
+
     if (vFLrpm != whl_arr[numFL]->prev_speed) {
         update_wheel_seamless(TIM1, vFLrpm, whl_arr[numFL]);
     }
@@ -503,6 +525,17 @@ int main(void)
   MX_TIM8_Init();
   MX_USART1_UART_Init();
   /* USER CODE BEGIN 2 */
+
+
+
+    system_init_modes();
+
+    // Boot-вспышка и переход в Hi-Z
+    HAL_Delay(1500);  // 1.5 секунды LED включен
+    enter_hi_impedance_mode();
+
+
+
     CANFD1_Set_Filtes();
 
     HAL_TIM_Base_Start_IT(&htim1);
@@ -602,7 +635,7 @@ whl_chnl rr_whl_s = {numRR, &htim4, 0, 24, 0, 0, 0, 0, 0, 0};
 
     HAL_GPIO_WritePin(GPIOA, EXT_LED_Pin, GPIO_PIN_SET);
 
-test_rpm_calculation()    # тестовая функция, вызвать при запуске. 
+test_rpm_calculation();   //# тестовая функция, вызвать при запуске.
     
     /* USER CODE BEGIN WHILE */
 // ============================================
@@ -1184,24 +1217,14 @@ void update_system_indicators(void)
 {
     static uint32_t last_update = 0;
     uint32_t current_time = HAL_GetTick();
-
+    
+    // Обновляем индикаторы не чаще чем каждые 10ms
     if(current_time - last_update < 10) {
         return;
     }
     last_update = current_time;
-
-    // LED индикация
-    handle_mode_led_indication();
-}
-
-// ============================================
-// LED �?НД�?КАЦ�?Я - �?СПРАВЛЕННАЯ
-// ============================================
-
-void handle_mode_led_indication(void)
-{
-    uint32_t current_time = HAL_GetTick();
     
+    // Основная обработка индикации LED по режимам
     switch(g_system_state.current_mode) {
         
         case MODE_BOOT:
@@ -1218,78 +1241,60 @@ void handle_mode_led_indication(void)
                 // Выключаем LED и больше не трогаем в BOOT режиме
                 HAL_GPIO_WritePin(GPIOA, EXT_LED_Pin, GPIO_PIN_SET);  // OFF
             }
-            return;  // ← ВАЖНО: не обрабатываем дальше!
+            break;
             
         case MODE_RPM_DYNAMIC:
             // LED управляется через can_active_receiving в main loop
             // НЕ МИГАЕМ, пока нет данных
             if(!g_system_state.rpm_mode_active) {
-                // Нет данных - LED горит постоянно (OFF)
+                // Нет данных - LED выключен
                 HAL_GPIO_WritePin(GPIOA, EXT_LED_Pin, GPIO_PIN_SET);
-                return;
             }
-            // Данные есть - LED управляется через recievingcounger в TIM8
-            return;
+            // Если данные есть - LED управляется через recievingcounger в TIM8
+            break;
             
         case MODE_FIXED_FREQUENCY:
             // Медленное мигание 1 Hz (500ms период)
-            {
-                uint32_t interval_ms = 500;
-                if(current_time - g_system_state.led_last_toggle_time >= interval_ms) {
-                    g_system_state.led_state = !g_system_state.led_state;
-                    g_system_state.led_last_toggle_time = current_time;
-                    
-                    if(g_system_state.led_state) {
-                        HAL_GPIO_WritePin(GPIOA, EXT_LED_Pin, GPIO_PIN_RESET);  // ON
-                    } else {
-                        HAL_GPIO_WritePin(GPIOA, EXT_LED_Pin, GPIO_PIN_SET);    // OFF
-                    }
-                }
-            }
-            return;
+            led_blink_pattern(current_time, 500);
+            break;
             
         case MODE_HI_IMPEDANCE:
             // Очень медленное мигание 0.2 Hz (2500ms период)
-            {
-                uint32_t interval_ms = 2500;
-                if(current_time - g_system_state.led_last_toggle_time >= interval_ms) {
-                    g_system_state.led_state = !g_system_state.led_state;
-                    g_system_state.led_last_toggle_time = current_time;
-                    
-                    if(g_system_state.led_state) {
-                        HAL_GPIO_WritePin(GPIOA, EXT_LED_Pin, GPIO_PIN_RESET);  // ON
-                    } else {
-                        HAL_GPIO_WritePin(GPIOA, EXT_LED_Pin, GPIO_PIN_SET);    // OFF
-                    }
-                }
-            }
-            return;
+            led_blink_pattern(current_time, 2500);
+            break;
             
         case MODE_DISABLED:
             // LED выключен
             HAL_GPIO_WritePin(GPIOA, EXT_LED_Pin, GPIO_PIN_SET);
-            return;
+            break;
             
         case MODE_ERROR:
             // Быстрое мигание 10 Гц (50ms период)
-            {
-                uint32_t interval_ms = 50;
-                if(current_time - g_system_state.led_last_toggle_time >= interval_ms) {
-                    g_system_state.led_state = !g_system_state.led_state;
-                    g_system_state.led_last_toggle_time = current_time;
-                    
-                    if(g_system_state.led_state) {
-                        HAL_GPIO_WritePin(GPIOA, EXT_LED_Pin, GPIO_PIN_RESET);  // ON
-                    } else {
-                        HAL_GPIO_WritePin(GPIOA, EXT_LED_Pin, GPIO_PIN_SET);    // OFF
-                    }
-                }
-            }
-            return;
+            led_blink_pattern(current_time, 50);
+            break;
             
         default:
+            // Неизвестный режим - LED выключен
             HAL_GPIO_WritePin(GPIOA, EXT_LED_Pin, GPIO_PIN_SET);
-            return;
+            break;
+    }
+    
+    // Здесь можно добавить обработку других индикаторов (дисплей, доп. LED и т.д.)
+    // ...
+}
+
+// Реализация вспомогательной функции
+static void led_blink_pattern(uint32_t current_time, uint32_t interval_ms)
+{
+    if(current_time - g_system_state.led_last_toggle_time >= interval_ms) {
+        g_system_state.led_state = !g_system_state.led_state;
+        g_system_state.led_last_toggle_time = current_time;
+        
+        if(g_system_state.led_state) {
+            HAL_GPIO_WritePin(GPIOA, EXT_LED_Pin, GPIO_PIN_RESET);  // ON
+        } else {
+            HAL_GPIO_WritePin(GPIOA, EXT_LED_Pin, GPIO_PIN_SET);    // OFF
+        }
     }
 }
 
@@ -1387,19 +1392,30 @@ void HAL_FDCAN_RxFifo0Callback(FDCAN_HandleTypeDef *hfdcan, uint32_t RxFifo0ITs)
     if ((RxFifo0ITs & FDCAN_IT_RX_FIFO0_NEW_MESSAGE) == 0) {
         return;
     }
-    
+
     FDCAN_RxHeaderTypeDef rxHeader;
     uint8_t data[8];
-    
+
     if (HAL_FDCAN_GetRxMessage(hfdcan, FDCAN_RX_FIFO0, &rxHeader, data) != HAL_OK) {
+        my_printf("[CAN ERR] Failed to get RX message\n");
         return;
     }
+
+    // Подробный дамп входящего сообщения
+    my_printf("[CAN RX] ID: 0x%04X, DLC: %d, Data: ", 
+              rxHeader.Identifier, 
+              rxHeader.DataLength >> 16);
     
+    for(int i = 0; i < 8; i++) {
+        my_printf("%02X ", data[i]);
+    }
+    my_printf("\n");
+
     // КОП�?РОВАТЬ ДАННЫЕ В ГЛОБАЛЬНУЮ СТРУКТУРУ
     can_rx_msg.id = rxHeader.Identifier;
     can_rx_msg.dlc = rxHeader.DataLength >> 16;
     memcpy(can_rx_msg.data, data, 8);
-    
+
     // УСТАНОВ�?ТЬ ФЛАГ
     can_rx_pending = 1;
 }

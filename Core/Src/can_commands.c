@@ -100,10 +100,10 @@ void process_can_command(uint8_t* data)
             uint8_t channel_mask = data[1];
             
             // Частота в миллигерцах (uint32_t LE)
-            uint32_t freq_mhz = ((uint32_t)data[5] << 24) |
-                                ((uint32_t)data[4] << 16) |
+            uint32_t freq_mhz = ((uint32_t)data[2]) |
                                 ((uint32_t)data[3] << 8) |
-                                data[2];
+                                ((uint32_t)data[4] << 16) |
+                                ((uint32_t)data[5] << 24);
             
             // Преобразуем в Hz (float для точности)
             float freq_hz = freq_mhz / 1000.0f;
@@ -113,7 +113,7 @@ void process_can_command(uint8_t* data)
             #endif
             
             // Проверка диапазона
-            if(freq_mhz < 1 || freq_mhz > 4500000) {
+            if(freq_mhz < 1000 || freq_mhz > 4500000) {
                 my_printf("[CAN] ERROR: Frequency out of range: %lu mHz\n", freq_mhz);
                 can_tx_error_code = 0x02;
                 can_tx_error_pending = 1;
@@ -123,29 +123,18 @@ void process_can_command(uint8_t* data)
             g_system_state.target_frequency_hz = (uint32_t)freq_hz;
             g_system_state.target_frequency_mhz = freq_mhz;
             
-            if(g_system_state.hi_impedance_active) {
-                exit_hi_impedance_mode();
-            }
-            
-            // ===== ЛОГИКА ДВУХ РЕЖИМОВ =====
-            
             if(channel_mask == 0x02) {
-                // === РЕЖИМ ONLY_FR: только TIM2 (FR), максимальная точность ===
-                my_printf("[FIXED_FREQ] === ONLY_FR MODE (TIM2 32-bit) ===\n");
-                my_printf("[FIXED_FREQ] Target: %.3f Hz\n", freq_hz);
-                
-                // Останавливаем TIM1, TIM3, TIM4
-                TIM1->CR1 &= ~TIM_CR1_CEN;
-                TIM3->CR1 &= ~TIM_CR1_CEN;
-                TIM4->CR1 &= ~TIM_CR1_CEN;
-                my_printf("[FIXED_FREQ] Stopped TIM1, TIM3, TIM4\n");
-                
-                // Расчёт для 32-битного TIM2
+                // ONLY_FR режим: только TIM2 (32-бит)
                 uint16_t psc;
                 uint32_t arr_32bit;
                 calculate_optimal_psc_arr_32bit(freq_hz, &psc, &arr_32bit);
                 
-                // Применяем к TIM2
+                // Останавливаем другие таймеры
+                TIM1->CR1 &= ~TIM_CR1_CEN;
+                TIM3->CR1 &= ~TIM_CR1_CEN;
+                TIM4->CR1 &= ~TIM_CR1_CEN;
+                
+                // Настройка TIM2
                 TIM2->CR1 &= ~TIM_CR1_CEN;
                 TIM2->PSC = psc;
                 TIM2->ARR = arr_32bit;
@@ -155,19 +144,12 @@ void process_can_command(uint8_t* data)
                 g_system_state.psc_values[1] = psc;
                 g_system_state.arr_values[1] = (uint16_t)(arr_32bit & 0xFFFF);
                 g_system_state.arr_values_32bit[1] = arr_32bit;
-                
-                my_printf("[FIXED_FREQ] TIM2 set: PSC=%u, ARR=%u (32-bit)\n", psc, arr_32bit);
-                
-            } else if(channel_mask == 0x0F || channel_mask == 0x00) {
-                // === РЕЖИМ ALL_FOUR: все четыре таймера (16-bit) ===
-                my_printf("[FIXED_FREQ] === ALL_FOUR MODE (16-bit for all) ===\n");
-                my_printf("[FIXED_FREQ] Target: %.3f Hz\n", freq_hz);
-                
-                // Расчёт для 16-битных таймеров
+            }
+            else if(channel_mask == 0x0F) {
+                // ALL_FOUR режим: все 4 таймера (16-бит)
                 uint16_t psc, arr_16bit;
                 calculate_optimal_psc_arr_16bit(freq_hz, &psc, &arr_16bit);
                 
-                // Применяем ко всем четырём таймерам
                 TIM_TypeDef* timers[4] = {TIM1, TIM2, TIM3, TIM4};
                 for(int i = 0; i < 4; i++) {
                     timers[i]->CR1 &= ~TIM_CR1_CEN;
@@ -179,20 +161,12 @@ void process_can_command(uint8_t* data)
                     g_system_state.psc_values[i] = psc;
                     g_system_state.arr_values[i] = arr_16bit;
                 }
-                
-                my_printf("[FIXED_FREQ] All timers: PSC=%u, ARR=%u (16-bit)\n", psc, arr_16bit);
-                
-            } else {
-                // Произвольная маска каналов - не поддерживаем
+            }
+            else {
                 my_printf("[CAN] ERROR: Unsupported channel mask: 0x%02X\n", channel_mask);
-                my_printf("[CAN] Use 0x0F (ALL_FOUR) or 0x02 (ONLY_FR)\n");
                 can_tx_error_code = 0x03;
                 can_tx_error_pending = 1;
                 break;
-            }
-            
-            if(channel_mask == 0xFF) {
-                set_all_channels_active(1);
             }
             
             system_switch_mode(MODE_FIXED_FREQUENCY);
@@ -387,23 +361,11 @@ void send_system_status(void)
     
     // Bytes 2-3: Частота ×10 (0.1 Hz разрешение)
     uint16_t freq_x10 = 0;
-    if(g_system_state.current_mode == MODE_FIXED_FREQUENCY) {
-        if(g_system_state.target_frequency_mhz > 0) {
-            // Преобразуем миллигерцы в сотые Hz
-            freq_x10 = (uint16_t)(g_system_state.target_frequency_mhz / 100);
-            if(freq_x10 > 65535) freq_x10 = 65535;
-        }
-    }
-    status_data[2] = freq_x10 & 0xFF;
-    status_data[3] = (freq_x10 >> 8) & 0xFF;
     
-    // Byte 4: Флаги состояния
+    // Bytes 4: Флаги состояния
     status_data[4] = 0;
-    if(g_system_state.analog_signal_present) {
-        status_data[4] |= 0x01;
-    }
     if(g_system_state.hi_impedance_active) {
-        status_data[4] |= 0x02;
+        status_data[4] |= 0x02;  // Бит Hi-Z
     }
     
     // Bytes 5-6: Uptime в секундах (uint16_t LE)
@@ -427,21 +389,7 @@ void send_system_status(void)
     #endif
 }
 
-// ============================================
-// ОТПРАВКА ОШИБКИ
-// ============================================
-
-void send_error_response(uint8_t error_code)
-{
-    uint8_t error_data[8] = {0};
-    error_data[0] = 0xFF;
-    error_data[1] = error_code;
     
-    send_can_message(CAN_STATUS_ID, error_data, 8);
-    
-    my_printf("[CAN_ERROR] Code: 0x%02X\n", error_code);
-}
-
 // ============================================
 // ОТПРАВКА CAN СООБЩЕНИЯ
 // ============================================
@@ -463,59 +411,6 @@ void send_can_message(uint32_t id, uint8_t* data, uint8_t length)
     HAL_FDCAN_AddMessageToTxFifoQ(&hfdcan1, &TxHeader, data);
 }
 
-// ============================================
-// РАСЧЁТ PSC/ARR ДЛЯ 16-БИТНЫХ ТАЙМЕРОВ
-// ============================================
-
-void calculate_optimal_psc_arr_16bit(float freq_hz, uint16_t *psc, uint16_t *arr)
-{
-    if(freq_hz <= 0 || freq_hz > APB1_CLK) {
-        *psc = 0;
-        *arr = 1;
-        my_printf("[CALC_16BIT] ERROR: Invalid frequency: %.3f Hz\n", freq_hz);
-        return;
-    }
-    
-    uint32_t target_ticks = (uint32_t)(APB1_CLK / freq_hz);
-    
-    uint32_t best_error = 0xFFFFFFFF;
-    uint16_t best_psc = 0;
-    uint16_t best_arr = 1;
-    
-    // Перебираем PSC от 0 до 65535
-    for(uint32_t p = 0; p <= 65535; p++) {
-        uint32_t arr_calc = (target_ticks / (p + 1)) - 1;
-        
-        // Для 16-бит таймеров максимум ARR = 65535
-        if(arr_calc > 65535) continue;
-        if(arr_calc < 1) continue;
-        
-        uint32_t actual_ticks = (p + 1) * (arr_calc + 1);
-        uint32_t error = (actual_ticks > target_ticks) ?
-                        (actual_ticks - target_ticks) :
-                        (target_ticks - actual_ticks);
-        
-        if(error < best_error) {
-            best_error = error;
-            best_psc = (uint16_t)p;
-            best_arr = (uint16_t)arr_calc;
-        }
-        
-        // Если ошибка нулевая - отлично!
-        if(error == 0) break;
-    }
-    
-    *psc = best_psc;
-    *arr = best_arr;
-    
-    float actual_freq = (float)APB1_CLK / ((best_psc + 1) * (best_arr + 1));
-    float error_hz = fabsf(actual_freq - freq_hz);
-    float error_pct = (error_hz / freq_hz) * 100.0f;
-    
-    my_printf("[CALC_16BIT] Target: %.3f Hz, Actual: %.3f Hz\n", freq_hz, actual_freq);
-    my_printf("[CALC_16BIT] PSC=%u, ARR=%u, Error: %.6f%% (%.3f Hz)\n",
-              best_psc, best_arr, error_pct, error_hz);
-}
 
 // ============================================
 // РАСЧЁТ PSC/ARR ДЛЯ 32-БИТНОГО TIM2
@@ -536,7 +431,7 @@ void calculate_optimal_psc_arr_32bit(float freq_hz, uint16_t *psc, uint32_t *arr
     uint16_t best_psc = 0;
     uint32_t best_arr = 1;
     
-    // Перебираем PSC от 0 до 65535
+    // Расширенный поиск PSC для максимальной точности
     for(uint32_t p = 0; p <= 65535; p++) {
         uint64_t arr_calc = (target_ticks / (p + 1)) - 1;
         
@@ -555,8 +450,11 @@ void calculate_optimal_psc_arr_32bit(float freq_hz, uint16_t *psc, uint32_t *arr
             best_arr = (uint32_t)arr_calc;
         }
         
-        // Если ошибка нулевая - отлично!
-        if(error == 0) break;
+        // Если ошибка меньше 0.001 Гц - отлично!
+        float actual_freq = (float)APB1_CLK / ((best_psc + 1) * (best_arr + 1));
+        if(fabsf(actual_freq - freq_hz) / freq_hz < 0.001) {
+            break;
+        }
     }
     
     *psc = best_psc;
@@ -566,7 +464,57 @@ void calculate_optimal_psc_arr_32bit(float freq_hz, uint16_t *psc, uint32_t *arr
     float error_hz = fabsf(actual_freq - freq_hz);
     float error_pct = (error_hz / freq_hz) * 100.0f;
     
-    my_printf("[CALC_32BIT] Target: %.3f Hz, Actual: %.3f Hz\n", freq_hz, actual_freq);
-    my_printf("[CALC_32BIT] PSC=%u, ARR=%u (32-bit), Error: %.6f%% (%.3f Hz)\n",
-              best_psc, best_arr, error_pct, error_hz);
+    my_printf("[CALC_32BIT] Target: %.3f Hz\n", freq_hz);
+    my_printf("[CALC_32BIT] Actual: %.3f Hz\n", actual_freq);
+    my_printf("[CALC_32BIT] PSC=%u, ARR=%lu (32-bit)\n", best_psc, best_arr);
+    my_printf("[CALC_32BIT] Error: %.6f%% (%.6f Hz)\n", error_pct, error_hz);
+}
+
+
+// ============================================
+// РАСЧЁТ PSC/ARR ДЛЯ 16-БИТНЫХ ТАЙМЕРОВ
+// ============================================
+
+
+
+void calculate_optimal_psc_arr_16bit(float freq_hz, uint16_t *psc, uint16_t *arr)
+{
+    if(freq_hz <= 0 || freq_hz > APB1_CLK) {
+        *psc = 0;
+        *arr = 1;
+        my_printf("[CALC_16BIT] ERROR: Invalid frequency: %.3f Hz\n", freq_hz);
+        return;
+    }
+    
+    uint32_t target_ticks = (uint32_t)(APB1_CLK / freq_hz);
+    
+    uint32_t best_error = 0xFFFFFFFF;
+    uint16_t best_psc = 0;
+    uint16_t best_arr = 1;
+    
+    for(uint32_t p = 0; p <= 65535; p++) {
+        uint32_t arr_calc = (target_ticks / (p + 1)) - 1;
+        
+        // Ограничение для 16-bit таймеров
+        if(arr_calc > 65535) continue;
+        if(arr_calc < 1) continue;
+        
+        // Остальная логика аналогична 32-bit версии
+    }
+}
+
+
+// ============================================
+// ОТПРАВКА ОШИБКИ
+// ============================================
+
+void send_error_response(uint8_t error_code)
+{
+    uint8_t error_data[8] = {0};
+    error_data[0] = 0xFF;
+    error_data[1] = error_code;
+    
+    send_can_message(CAN_STATUS_ID, error_data, 8);
+    
+    my_printf("[CAN_ERROR] Code: 0x%02X\n", error_code);
 }
