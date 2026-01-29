@@ -1,4 +1,3 @@
-
 /**
  * system_modes.c - VERSION 3
  * 
@@ -30,9 +29,9 @@ const char* mode_names[] = {
 
 void system_init_modes(void)
 {
-    #if DEBUG_SYSTEM
+#ifdef DEBUG_SYSTEM
     my_printf("[SYSTEM] Initializing modes...\n");
-    #endif
+#endif
 
     g_system_state.current_mode = MODE_BOOT;
     g_system_state.channel_mask = 0x0F;
@@ -61,10 +60,10 @@ void system_init_modes(void)
     // Подготовка к Hi-Z после boot
     g_system_state.pending_hi_z = 1;
     
-    #if DEBUG_SYSTEM
+#ifdef DEBUG_SYSTEM
     my_printf("[SYSTEM] Initialized. Mode: %s\n", 
              get_mode_name(g_system_state.current_mode));
-    #endif
+#endif
 }
 
 // ============================================
@@ -76,17 +75,17 @@ void system_switch_mode(operation_mode_t new_mode)
     operation_mode_t old_mode = g_system_state.current_mode;
     
     if(old_mode == new_mode) {
-        #if DEBUG_SYSTEM
+#ifdef DEBUG_SYSTEM
         my_printf("[SYSTEM] Already in mode: %s\n", get_mode_name(new_mode));
-        #endif
+#endif
         return;
     }
     
-    #if DEBUG_SYSTEM
+#ifdef DEBUG_SYSTEM
     my_printf("\n[SYSTEM] Mode transition: %s → %s\n", 
               get_mode_name(old_mode), 
               get_mode_name(new_mode));
-    #endif
+#endif
     
     // ============================================
     // ВЫХОД ИЗ СТАРОГО РЕЖИМА
@@ -96,21 +95,21 @@ void system_switch_mode(operation_mode_t new_mode)
     switch(old_mode) {
         case MODE_RPM_DYNAMIC:
             g_system_state.rpm_mode_active = 0;
-            #if DEBUG_SYSTEM
+#ifdef DEBUG_SYSTEM
             my_printf("[SYSTEM] RPM mode ended\n");
-            #endif
+#endif
             break;
             
         case MODE_FIXED_FREQUENCY:
-            #if DEBUG_SYSTEM
+#ifdef DEBUG_SYSTEM
             my_printf("[SYSTEM] Exiting FIXED_FREQUENCY\n");
-            #endif
+#endif
             break;
             
         case MODE_HI_IMPEDANCE:
-            #if DEBUG_SYSTEM
+#ifdef DEBUG_SYSTEM
             my_printf("[SYSTEM] Exiting HI_IMPEDANCE\n");
-            #endif
+#endif
             break;
             
         default:
@@ -125,7 +124,7 @@ void system_switch_mode(operation_mode_t new_mode)
     // ВХОД В НОВЫЙ РЕЖИМ
     // ============================================
     
-    #if DEBUG_SYSTEM
+#ifdef DEBUG_SYSTEM
     switch(new_mode) {
         case MODE_BOOT:
             my_printf("[SYSTEM] BOOT mode\n");
@@ -166,7 +165,7 @@ void system_switch_mode(operation_mode_t new_mode)
         default:
             break;
     }
-    #endif
+#endif
     
     // Реальные действия при входе
     switch(new_mode) {
@@ -185,13 +184,13 @@ void system_switch_mode(operation_mode_t new_mode)
             break;
     }
     
-    // Инициализируем LED для новго режима
+    // Инициализируем LED для нового режима
     g_system_state.led_last_toggle_time = HAL_GetTick();
     g_system_state.led_state = 0;
     
-    #if DEBUG_SYSTEM
+#ifdef DEBUG_SYSTEM
     my_printf("[SYSTEM] Mode switch complete\n\n");
-    #endif
+#endif
 }
 
 // ============================================
@@ -228,7 +227,7 @@ uint32_t system_get_uptime_seconds(void)
 
 void system_print_status(void)
 {
-    #if DEBUG_SYSTEM
+#ifdef DEBUG_SYSTEM
     my_printf("\n=== SYSTEM STATUS ===\n");
     my_printf("Mode: %s\n", get_mode_name(g_system_state.current_mode));
     my_printf("Channels: 0x%02X\n", g_system_state.channel_mask);
@@ -248,7 +247,7 @@ void system_print_status(void)
              HAL_GetTick() - g_system_state.last_can_command_time);
     my_printf("Uptime: %lu seconds\n", system_get_uptime_seconds());
     my_printf("===================\n\n");
-    #endif
+#endif
 }
 
 // ============================================
@@ -276,7 +275,7 @@ void set_all_channels_active(uint8_t active)
 {
     g_system_state.channel_mask = active ? 0x0F : 0x00;
     
-    #if DEBUG_SYSTEM
+#ifdef DEBUG_SYSTEM
     my_printf("[SYSTEM] All channels: %s\n", active ? "ACTIVE" : "INACTIVE");
-    #endif
+#endif
 }
