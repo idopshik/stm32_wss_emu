@@ -1,21 +1,26 @@
 /* USER CODE BEGIN Header */
 /**
-  ******************************************************************************
-  * @file           : main.h
-  * @brief          : Header for main.c file.
-  *                   This file contains the common defines of the application.
-  ******************************************************************************
-  * @attention
-  *
-  * Copyright (c) 2025 STMicroelectronics.
-  * All rights reserved.
-  *
-  * This software is licensed under terms that can be found in the LICENSE file
-  * in the root directory of this software component.
-  * If no LICENSE file comes with this software, it is provided AS-IS.
-  *
-  ******************************************************************************
-  */
+
+    @file : main.h
+
+    @brief : Header for main.c file.
+    text
+
+              This file contains the common defines of the application.
+
+    @attention
+
+    Copyright (c) 2025 STMicroelectronics.
+
+    All rights reserved.
+
+    This software is licensed under terms that can be found in the LICENSE file
+
+    in the root directory of this software component.
+
+    If no LICENSE file comes with this software, it is provided AS-IS.
+
+*/
 /* USER CODE END Header */
 
 /* Define to prevent recursive inclusion -------------------------------------*/
@@ -36,12 +41,11 @@ extern "C" {
 
 /* Exported types ------------------------------------------------------------*/
 /* USER CODE BEGIN ET */
-    //
 // ===== CAN RX =====
 typedef struct {
-    uint32_t id;
-    uint8_t  dlc;
-    uint8_t  data[8];
+uint32_t id;
+uint8_t dlc;
+uint8_t data[8];
 } can_msg_t;
 
 extern volatile uint8_t can_rx_pending;
@@ -52,7 +56,7 @@ extern volatile uint8_t can_tx_status_pending;
 extern volatile uint8_t can_tx_error_pending;
 extern uint8_t can_tx_error_code;
 
-// Прототипы функций
+// Function prototypes
 void process_can_in_main(void);
 
 /* USER CODE END ET */
@@ -105,3 +109,4 @@ void Error_Handler(void);
 #endif
 
 #endif /* __MAIN_H */
+

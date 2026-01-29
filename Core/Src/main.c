@@ -1,40 +1,37 @@
 /* USER CODE BEGIN Header */
 /**
- ******************************************************************************
- * @file           : main.c
- * @brief          : Main program body
- ******************************************************************************
- * @attention
- *
- * Copyright (c) 2025 STMicroelectronics.
- * All rights reserved.
- *
- * This software is licensed under terms that can be found in the LICENSE file
- * in the root directory of this software component.
- * If no LICENSE file comes with this software, it is provided AS-IS.
- *
- ******************************************************************************
- */
+  ******************************************************************************
+  * @file           : main.c
+  * @brief          : Main program body
+  ******************************************************************************
+  * @attention
+  *
+  * Copyright (c) 2025 STMicroelectronics.
+  * All rights reserved.
+  *
+  * This software is licensed under terms that can be found in the LICENSE file
+  * in the root directory of this software component.
+  * If no LICENSE file comes with this software, it is provided AS-IS.
+  *
+  ******************************************************************************
+  */
 /* USER CODE END Header */
 /* Includes ------------------------------------------------------------------*/
 #include "main.h"
 
 /* Private includes ----------------------------------------------------------*/
 /* USER CODE BEGIN Includes */
-
 #include <inttypes.h>
 #include <stdarg.h>
 #include <stdio.h>
 #include <string.h>
 
 #include "system_modes.h"
-#include "can_commands.h"  
-
+#include "can_commands.h"
 /* USER CODE END Includes */
 
 /* Private typedef -----------------------------------------------------------*/
 /* USER CODE BEGIN PTD */
-
 #define CAN_SPECIAL_ID 0x003
 #define APB1_CLK 150000000
 #define MinutTeethFactor 1.6
@@ -43,19 +40,18 @@
 #define numRL 2
 #define numRR 3
 
-// ДОБАВИТЬ КОНСТАНТУ ДЛЯ РАСЧЕТА RPM (согласно техтребованиям)
-#define TOTAL_DIVIDER_CONST 2343750000ULL  // 2,343,750,000 = 150M / 0.064
+#define TOTAL_DIVIDER_CONST 2343750000ULL
 
 FDCAN_TxHeaderTypeDef TxHeader1;
 FDCAN_RxHeaderTypeDef RxHeader1;
 
-uint8_t canRX[8];  // CAN Bus Receive Buffer
+uint8_t canRX[8];
 uint8_t freshCanMsg = 0;
 
 char ms100Flag = 0;
 char ms100Flag_2 = 0;
 
-uint8_t recievingcounger = 0;    // for LED logic
+uint8_t recievingcounger = 0;
 uint8_t can_active_receiving = 0;
 
 typedef struct {
@@ -67,22 +63,19 @@ typedef struct {
     int target_arr;
     uint8_t pending_update;
     uint32_t prev_arr;
-    uint8_t initial_tmp_flag;  // Добавляем недостающий член
-    uint8_t psc_change_flag;   // Добавляем недостающий член
+    uint8_t initial_tmp_flag;
+    uint8_t psc_change_flag;
 } whl_chnl;
 
 whl_chnl *whl_arr[4];
-
 /* USER CODE END PTD */
 
 /* Private define ------------------------------------------------------------*/
 /* USER CODE BEGIN PD */
-
 /* USER CODE END PD */
 
 /* Private macro -------------------------------------------------------------*/
 /* USER CODE BEGIN PM */
-
 /* USER CODE END PM */
 
 /* Private variables ---------------------------------------------------------*/
@@ -98,8 +91,6 @@ TIM_HandleTypeDef htim8;
 UART_HandleTypeDef huart1;
 
 /* USER CODE BEGIN PV */
-
-// CAN глобальные переменные - ТОЛЬКО ЗДЕСЬ!
 volatile uint8_t can_rx_pending = 0;
 can_msg_t can_rx_msg;
 
@@ -107,9 +98,7 @@ volatile uint8_t can_tx_status_pending = 0;
 volatile uint8_t can_tx_error_pending = 0;
 uint8_t can_tx_error_code = 0;
 
-
 uint8_t update_led_flag = 0;
-
 /* USER CODE END PV */
 
 /* Private function prototypes -----------------------------------------------*/
@@ -125,8 +114,8 @@ static void MX_TIM4_Init(void);
 static void MX_TIM6_Init(void);
 static void MX_TIM8_Init(void);
 static void MX_USART1_UART_Init(void);
-/* USER CODE BEGIN PFP */
 
+/* USER CODE BEGIN PFP */
 static void CANFD1_Set_Filtes(void);
 void my_printf(const char *fmt, ...);
 int calculete_prsc_and_perio(int val, int *arr, whl_chnl *whl_arr[], int wheelnum);
@@ -134,14 +123,10 @@ uint32_t calculete_period_only(int val);
 void update_wheel_seamless(TIM_TypeDef* TIMx, int rpm, whl_chnl* wheel);
 void set_new_speeds(int vFLrpm, int vFRrpm, int vRLrpm, int vRRrpm, whl_chnl *whl_arr[]);
 void print_timer_status(void);
-
-// Новые функции для работы с режимами
 void update_system_indicators(void);
 void check_system_health(void);
-
-void test_mode_switching(void);  // Для тестирования через UART
+void test_rpm_calculation(void);
 void process_can_in_main(void);
-
 /* USER CODE END PFP */
 
 /* Private user code ---------------------------------------------------------*/
@@ -154,99 +139,106 @@ int _write(int file, char *ptr, int len)
     return len;
 }
 
-void PrintArrayLen(uint8_t *data_arr, uint8_t data_length)
+void vprint(const char *fmt, va_list argp)
 {
-    for (int i = 0; i < data_length; i++) {
-        my_printf("%#x ", data_arr[i]);
+    char string[200];
+    if (0 < vsprintf(string, fmt, argp))
+    {
+        HAL_UART_Transmit(&huart1, (uint8_t *)string, strlen(string), 0xffffff);
     }
-    my_printf("\n");
 }
 
-void PrintArray(uint8_t *data_arr)
+void my_printf(const char *fmt, ...)
 {
-    int debval;
-    int denominator = sizeof(data_arr[0]);
-
-    if (denominator > 0) {
-        debval = (sizeof(data_arr) / denominator);
-        for (int i = 0; i < debval; i++) {
-            my_printf("%#x ", data_arr[i]);
-        }
-    }
-    my_printf("\n");
+#ifdef DEBUG
+    va_list argp;
+    va_start(argp, fmt);
+    vprint(fmt, argp);
+    va_end(argp);
+#endif
 }
 
 uint32_t calculete_period_only(int val)
 {
-    // Защита от нулевого и отрицательного значения
     if (val <= 0) {
         val = 1;
+#ifdef DEBUG
         my_printf("[CALC_PERIOD_TIM2] WARNING: Zero or negative input, using 1\n");
+#endif
     }
 
-    // Максимальное ограничение для предотвращения переполнения
     if (val > 65535) {
         val = 65535;
+#ifdef DEBUG
         my_printf("[CALC_PERIOD_TIM2] WARNING: Input too large, clamped to 65535\n");
+#endif
     }
 
     uint64_t total_divider = TOTAL_DIVIDER_CONST / val;
     uint32_t arr = (uint32_t)(total_divider / 13) - 1;
 
+#ifdef DEBUG
     my_printf("[CALC_PERIOD_TIM2] Input RPM: %d\n", val);
     my_printf("[CALC_PERIOD_TIM2] Total Divider: %lu\n", (uint32_t)total_divider);
     my_printf("[CALC_PERIOD_TIM2] PSC: 12\n");
     my_printf("[CALC_PERIOD_TIM2] ARR: %lu\n", arr);
+#endif
 
     return arr;
 }
 
 int calculete_prsc_and_perio(int val, int *arr, whl_chnl *whl_arr[], int wheelnum)
 {
+#ifdef DEBUG
     my_printf("[EDGE_CASE] ===== INPUT ANALYSIS =====\n");
     my_printf("[EDGE_CASE] Raw Input RPM: %d\n", val);
     my_printf("[EDGE_CASE] Wheel Number: %d\n", wheelnum);
+#endif
 
-    // Обработка нулевого и отрицательного значения
     if (val <= 0) {
+#ifdef DEBUG
         my_printf("[EDGE_CASE] WARNING: Zero/Negative input. Clamping to 1!\n");
+#endif
         val = 1;
     }
 
-    // Максимальное ограничение
     if (val > 65535) {
+#ifdef DEBUG
         my_printf("[EDGE_CASE] WARNING: Input exceeds 16-bit range. Clamping to 65535!\n");
+#endif
         val = 65535;
     }
 
-    // Выбор PSC
     int newpresc;
     if (val < 4274) {
         newpresc = 1200;
+#ifdef DEBUG
         my_printf("[EDGE_CASE] PSC selection: 1200 (RPM < 4274)\n");
+#endif
     } else {
         newpresc = 24;
+#ifdef DEBUG
         my_printf("[EDGE_CASE] PSC selection: 24 (RPM >= 4274)\n");
+#endif
     }
 
-    // Расчет Total Divider
     uint64_t total_divider = TOTAL_DIVIDER_CONST / val;
-    
-    // Расчет ARR с новым PSC
     uint32_t tmp = (uint32_t)(total_divider / (newpresc + 1)) - 1;
-    
-    // Ограничение для 16-битных таймеров
+
     if (tmp > 65535) {
+#ifdef DEBUG
         my_printf("[EDGE_CASE] WARNING: ARR exceeds 16-bit range. Clamping to 65535!\n");
+#endif
         tmp = 65535;
     }
 
+#ifdef DEBUG
     my_printf("[EDGE_CASE] Total Divider: %lu\n", (uint32_t)total_divider);
     my_printf("[EDGE_CASE] Selected PSC: %d\n", newpresc);
     my_printf("[EDGE_CASE] Calculated ARR: %lu\n", tmp);
     my_printf("[EDGE_CASE] ===== END ANALYSIS =====\n\n");
+#endif
 
-    // Остальная логика без изменений
     arr[0] = whl_arr[wheelnum]->prev_psc;
     arr[1] = newpresc;
     arr[2] = (int)tmp;
@@ -256,24 +248,22 @@ int calculete_prsc_and_perio(int val, int *arr, whl_chnl *whl_arr[], int wheelnu
     return 0;
 }
 
-
 void update_wheel_seamless(TIM_TypeDef* TIMx, int rpm, whl_chnl* wheel)
 {
-
+#ifdef DEBUG
     my_printf("[SEAMLESS] Timer: TIM%d, RPM: %d\n", 
               wheel->wheel_num + 1, rpm);
+#endif
 
     if (rpm < 0x3F) {
         TIMx->CR1 &= ~TIM_CR1_CEN;
         wheel->pending_update = 0;
         __HAL_TIM_DISABLE_IT(wheel->htim, TIM_IT_UPDATE);
 
-        // СНИМАЕМ БИТ ИЗ МАСКИ
         uint8_t channel_bit = 1 << wheel->wheel_num;
         g_system_state.channel_mask &= ~channel_bit;
         return;
     } else {
-        // ДОБАВЛЯЕМ БИТ В МАСКУ
         uint8_t channel_bit = 1 << wheel->wheel_num;
         g_system_state.channel_mask |= channel_bit;
     }
@@ -310,35 +300,36 @@ void update_wheel_seamless(TIM_TypeDef* TIMx, int rpm, whl_chnl* wheel)
         TIMx->CR1 |= TIM_CR1_CEN;
     }
     
-printf("PSC change pending: %d->%d, ARR: %lu->%d\n", 
-       wheel->prev_psc, new_psc, wheel->prev_arr, new_arr);
+#ifdef DEBUG
+    printf("PSC change pending: %d->%d, ARR: %lu->%d\n", 
+           wheel->prev_psc, new_psc, wheel->prev_arr, new_arr);
+#endif
 }
 
 void set_new_speeds(int vFLrpm, int vFRrpm, int vRLrpm, int vRRrpm, whl_chnl *whl_arr[]) {
-
-
+#ifdef DEBUG
     my_printf("[SET_SPEEDS] FL: %d, FR: %d, RL: %d, RR: %d\n", 
                vFLrpm, vFRrpm, vRLrpm, vRRrpm);
+#endif
 
     if (vFLrpm != whl_arr[numFL]->prev_speed) {
         update_wheel_seamless(TIM1, vFLrpm, whl_arr[numFL]);
     }
     
-if (vFRrpm != whl_arr[numFR]->prev_speed) {
-    if (vFRrpm < 0x3F) {  // Порог активности 63 (0x3F) как в техтребованиях
-        TIM2->CR1 &= ~TIM_CR1_CEN;
-        g_system_state.channel_mask &= ~(1 << 1);  // Бит 1 = FR (TIM2)
-    } else {
-        TIM2->CR1 |= TIM_CR1_CEN;
-        g_system_state.channel_mask |= (1 << 1);   // Включить FR
-        
-        // Используем исправленную функцию
-        uint32_t period = calculete_period_only(vFRrpm);
-        TIM2->CR1 |= TIM_CR1_ARPE;
-        TIM2->ARR = period;
+    if (vFRrpm != whl_arr[numFR]->prev_speed) {
+        if (vFRrpm < 0x3F) {
+            TIM2->CR1 &= ~TIM_CR1_CEN;
+            g_system_state.channel_mask &= ~(1 << 1);
+        } else {
+            TIM2->CR1 |= TIM_CR1_CEN;
+            g_system_state.channel_mask |= (1 << 1);
+            
+            uint32_t period = calculete_period_only(vFRrpm);
+            TIM2->CR1 |= TIM_CR1_ARPE;
+            TIM2->ARR = period;
+        }
+        whl_arr[numFR]->prev_speed = vFRrpm;
     }
-    whl_arr[numFR]->prev_speed = vFRrpm;
-}
     
     if (vRLrpm != whl_arr[numRL]->prev_speed) {
         update_wheel_seamless(TIM3, vRLrpm, whl_arr[numRL]);
@@ -346,59 +337,6 @@ if (vFRrpm != whl_arr[numFR]->prev_speed) {
     
     if (vRRrpm != whl_arr[numRR]->prev_speed) {
         update_wheel_seamless(TIM4, vRRrpm, whl_arr[numRR]);
-    }
-}
-
-void vprint(const char *fmt, va_list argp)
-{
-    char string[200];
-    if (0 < vsprintf(string, fmt, argp))
-    {
-        HAL_UART_Transmit(&huart1, (uint8_t *)string, strlen(string), 0xffffff);
-    }
-}
-
-void my_printf(const char *fmt, ...)
-{
-    va_list argp;
-    va_start(argp, fmt);
-    vprint(fmt, argp);
-    va_end(argp);
-}
-
-void print_test(void)
-{
-    printf("\r\nRTOS\r\nCharacters: %c %c\r\n", 'a', 65);
-    printf("Decimals: %d %ld\r\n", 1977, 650000L);
-    printf("Preceding with blanks: %10d\r\n", 1977);
-    printf("Preceding with zeros: %010d\r\n", 1977);
-    printf("Some different radices: %d %x %o %#x %#o\r\n", 100, 100, 100, 100, 100);
-    printf("floats: %4.2f %+.0e %E\r\n", 3.1416, 3.1416, 3.1416);
-    printf("Width trick: %*d\r\n", 5, 10);
-    printf("%s\r\n\r\n", "A string");
-
-    my_printf("\r\nRTOS\r\nCharacters: %c %c\r\n", 'a', 65);
-    my_printf("Decimals: %d %ld\r\n", 1977, 650000L);
-    my_printf("Preceding with blanks: %10d\r\n", 1977);
-    my_printf("Preceding with zeros: %010d\r\n", 1977);
-    my_printf("Some different radices: %d %x %o %#x %#o\r\n", 100, 100, 100, 100, 100);
-    my_printf("floats: %4.2f %+.0e %E\r\n", 3.1416, 3.1416, 3.1416);
-    my_printf("Width trick: %*d\r\n", 5, 10);
-    my_printf("%s\r\n\r\n", "A string");
-}
-
-void print_timer_status(void) {
-    if (ms100Flag_2) {
-        ms100Flag_2 = 0;
-        my_printf("TIM1: PSC=%lu, ARR=%lu, CNT=%lu%s\n", 
-               TIM1->PSC, TIM1->ARR, TIM1->CNT,
-               whl_arr[numFL]->pending_update ? " [PENDING]" : "");
-        my_printf("TIM3: PSC=%lu, ARR=%lu, CNT=%lu%s\n", 
-               TIM3->PSC, TIM3->ARR, TIM3->CNT,
-               whl_arr[numRL]->pending_update ? " [PENDING]" : "");
-        my_printf("TIM4: PSC=%lu, ARR=%lu, CNT=%lu%s\n", 
-               TIM4->PSC, TIM4->ARR, TIM4->CNT,
-               whl_arr[numRR]->pending_update ? " [PENDING]" : "");
     }
 }
 
@@ -413,13 +351,14 @@ void HAL_TIM_PeriodElapsedCallback(TIM_HandleTypeDef *htim)
             htim->Instance->ARR = whl_arr[i]->target_arr;
             
             whl_arr[i]->prev_psc = whl_arr[i]->target_psc;
-            whl_arr[i]->prev_speed = whl_arr[i]->prev_speed;
             whl_arr[i]->pending_update = 0;
             
             __HAL_TIM_DISABLE_IT(htim, TIM_IT_UPDATE);
             
+#ifdef DEBUG
             my_printf("PSC seamless switch: TIM%c, PSC=%d, ARR=%d\n", 
                    '1' + i, whl_arr[i]->target_psc, whl_arr[i]->target_arr);
+#endif
             break;
         }
     }
@@ -428,6 +367,7 @@ void HAL_TIM_PeriodElapsedCallback(TIM_HandleTypeDef *htim)
         ms100Flag = 1;
         ms100Flag_2 = 1;
     }
+    
     if (htim->Instance == TIM8) {
         if (can_active_receiving == 1){
             HAL_GPIO_TogglePin(GPIOA, EXT_LED_Pin);
@@ -452,18 +392,16 @@ void HAL_TIM_PeriodElapsedCallback(TIM_HandleTypeDef *htim)
 
 void test_rpm_calculation(void)
 {
+#ifdef DEBUG
     my_printf("\n=== TEST RPM CALCULATION ===\n");
     
-    // Тест 1: raw_value = 1000 (из техтребований)
     int test_val = 1000;
-    float f_signal = test_val * 0.032f;      // 32 Гц
-    float f_timer = test_val * 0.064f;       // 64 Гц
-    uint64_t total_divider = TOTAL_DIVIDER_CONST / test_val;  // 2,343,750
+    float f_signal = test_val * 0.032f;
+    float f_timer = test_val * 0.064f;
+    uint64_t total_divider = TOTAL_DIVIDER_CONST / test_val;
     
-    // Для TIM2 (PSC=12)
-    uint32_t arr_tim2 = (uint32_t)(total_divider / 13) - 1;  // ~180,287
+    uint32_t arr_tim2 = (uint32_t)(total_divider / 13) - 1;
     
-    // Для 16-битных (PSC=24 т.к. 1000 < 4274? НЕТ! 1000 < 4274 - да!)
     int psc_16bit = (test_val < 4274) ? 1200 : 24;
     uint32_t arr_16bit = (uint32_t)(total_divider / (psc_16bit + 1)) - 1;
     
@@ -473,17 +411,15 @@ void test_rpm_calculation(void)
     my_printf("  TIM2: PSC=12, ARR=%lu\n", arr_tim2);
     my_printf("  TIM1/3/4: PSC=%d, ARR=%lu\n", psc_16bit, arr_16bit);
     
-    // Тест 2: raw_value = 4274 (граничное значение)
     test_val = 4274;
-    total_divider = TOTAL_DIVIDER_CONST / test_val;  // ~548,468
-    psc_16bit = (test_val < 4274) ? 1200 : 24;  // Должно быть 24!
+    total_divider = TOTAL_DIVIDER_CONST / test_val;
+    psc_16bit = (test_val < 4274) ? 1200 : 24;
     
     my_printf("\nBorder val=%d:\n", test_val);
     my_printf("  Total_Divider=%llu\n", total_divider);
     my_printf("  PSC should be=%d (>=4274 → 24)\n", psc_16bit);
+#endif
 }
-
-
 
 /* USER CODE END 0 */
 
@@ -493,7 +429,6 @@ void test_rpm_calculation(void)
   */
 int main(void)
 {
-
   /* USER CODE BEGIN 1 */
 
   /* USER CODE END 1 */
@@ -526,129 +461,109 @@ int main(void)
   MX_USART1_UART_Init();
   /* USER CODE BEGIN 2 */
 
+  system_init_modes();
 
+  HAL_Delay(1500);
+  enter_hi_impedance_mode();
 
-    system_init_modes();
+  CANFD1_Set_Filtes();
 
-    // Boot-вспышка и переход в Hi-Z
-    HAL_Delay(1500);  // 1.5 секунды LED включен
-    enter_hi_impedance_mode();
+  HAL_TIM_Base_Start_IT(&htim1);
+  HAL_TIM_Base_Start_IT(&htim2);
+  HAL_TIM_Base_Start_IT(&htim3);
+  HAL_TIM_Base_Start_IT(&htim4);
+  HAL_TIM_Base_Start_IT(&htim6);
+  HAL_TIM_Base_Start_IT(&htim8);
 
-
-
-    CANFD1_Set_Filtes();
-
-    HAL_TIM_Base_Start_IT(&htim1);
-    HAL_TIM_Base_Start_IT(&htim2);
-    HAL_TIM_Base_Start_IT(&htim3);
-    HAL_TIM_Base_Start_IT(&htim4);
-    HAL_TIM_Base_Start_IT(&htim6);
-    HAL_TIM_Base_Start_IT(&htim8);
-
-    HAL_TIM_OC_Start_IT(&htim2, TIM_CHANNEL_1);
+  HAL_TIM_OC_Start_IT(&htim2, TIM_CHANNEL_1);
 
 #ifdef DEBUG
-    my_printf("[ INFO ] Program start now\n");
+  my_printf("[ INFO ] Program start now\n");
 #endif
 
-    __HAL_TIM_ENABLE_IT(&htim1, TIM_IT_UPDATE);
-    __HAL_TIM_ENABLE_IT(&htim3, TIM_IT_UPDATE);
-    __HAL_TIM_ENABLE_IT(&htim4, TIM_IT_UPDATE);
+  __HAL_TIM_ENABLE_IT(&htim1, TIM_IT_UPDATE);
+  __HAL_TIM_ENABLE_IT(&htim3, TIM_IT_UPDATE);
+  __HAL_TIM_ENABLE_IT(&htim4, TIM_IT_UPDATE);
 
-    my_printf("Seamless PSC switching enabled\n");
+#ifdef DEBUG
+  my_printf("Seamless PSC switching enabled\n");
+#endif
 
-// Настройка приоритетов согласно требованиям:
-// CAN = 0 (highest), TIM6 = 1, Таймеры = 15 (lowest)
+  HAL_NVIC_SetPriority(FDCAN1_IT0_IRQn, 0, 0);
+  HAL_NVIC_SetPriority(TIM8_CC_IRQn, 5, 0);
+  HAL_NVIC_SetPriority(TIM6_DAC_IRQn, 6, 0);
+  HAL_NVIC_SetPriority(TIM1_UP_TIM16_IRQn, 10, 0);
+  HAL_NVIC_SetPriority(TIM3_IRQn, 10, 0);
+  HAL_NVIC_SetPriority(TIM4_IRQn, 10, 0);
+  HAL_NVIC_SetPriority(USART1_IRQn, 10, 0);
 
-HAL_NVIC_SetPriority(FDCAN1_IT0_IRQn, 0, 0);      // CAN - самый высокий (0)
-HAL_NVIC_SetPriority(TIM8_CC_IRQn, 5, 0);         // TIM8 - средний
-HAL_NVIC_SetPriority(TIM6_DAC_IRQn, 6, 0);        // TIM6 
-HAL_NVIC_SetPriority(TIM1_UP_TIM16_IRQn, 10, 0);  // Таймеры - низкие
-HAL_NVIC_SetPriority(TIM3_IRQn, 10, 0);
-HAL_NVIC_SetPriority(TIM4_IRQn, 10, 0);
-HAL_NVIC_SetPriority(USART1_IRQn, 10, 0);         // UART - низкий
+#ifdef DEBUG
+  my_printf("\n========================================\n");
+  my_printf("SYSTEM STARTED SUCCESSFULLY\n");
+  my_printf("Current mode: %s\n", get_mode_name(g_system_state.current_mode));
+  my_printf("No EEPROM - all settings volatile\n");
+  my_printf("========================================\n\n");
 
+  my_printf("=== Clock Configuration ===\n");
+  my_printf("SystemCoreClock: %lu Hz\n", SystemCoreClock);
+  my_printf("HCLK: %lu Hz\n", HAL_RCC_GetHCLKFreq());
+  my_printf("PCLK1: %lu Hz\n", HAL_RCC_GetPCLK1Freq());
+  my_printf("PCLK2: %lu Hz\n", HAL_RCC_GetPCLK2Freq());
 
-    
-    my_printf("\n========================================\n");
-    my_printf("SYSTEM STARTED SUCCESSFULLY\n");
-    my_printf("Current mode: %s\n", get_mode_name(g_system_state.current_mode));
-    my_printf("No EEPROM - all settings volatile\n");
-    my_printf("========================================\n\n");
+  uint32_t pllm = (RCC->PLLCFGR & RCC_PLLCFGR_PLLM) >> 4;
+  uint32_t plln = (RCC->PLLCFGR & RCC_PLLCFGR_PLLN) >> 8;
+  uint32_t pllp = (RCC->PLLCFGR & RCC_PLLCFGR_PLLP) >> 17;
+  uint32_t pllq = (RCC->PLLCFGR & RCC_PLLCFGR_PLLQ) >> 21;
+  uint32_t pllr = (RCC->PLLCFGR & RCC_PLLCFGR_PLLR) >> 25;
 
+  my_printf("PLL raw: M=%lu, N=%lu, P=%lu, Q=%lu, R=%lu\n", 
+            pllm, plln, pllp, pllq, pllr);
 
-    my_printf("=== Clock Configuration ===\n");
-    my_printf("SystemCoreClock: %lu Hz\n", SystemCoreClock);
-    my_printf("HCLK: %lu Hz\n", HAL_RCC_GetHCLKFreq());
-    my_printf("PCLK1: %lu Hz\n", HAL_RCC_GetPCLK1Freq());
-    my_printf("PCLK2: %lu Hz\n", HAL_RCC_GetPCLK2Freq());
-
-    // ??? ???? PLL
-    uint32_t pllm = (RCC->PLLCFGR & RCC_PLLCFGR_PLLM) >> 4;
-    uint32_t plln = (RCC->PLLCFGR & RCC_PLLCFGR_PLLN) >> 8;
-    uint32_t pllp = (RCC->PLLCFGR & RCC_PLLCFGR_PLLP) >> 17;
-    uint32_t pllq = (RCC->PLLCFGR & RCC_PLLCFGR_PLLQ) >> 21;
-    uint32_t pllr = (RCC->PLLCFGR & RCC_PLLCFGR_PLLR) >> 25;
-
-    my_printf("PLL raw: M=%lu, N=%lu, P=%lu, Q=%lu, R=%lu\n", 
-              pllm, plln, pllp, pllq, pllr);
-
-    // ???????? ???????? ??????? ???????
-    my_printf("\nTimer test:\n");
-    my_printf("TIM1 input: %lu Hz\n", HAL_RCC_GetPCLK1Freq());
-    my_printf("TIM1 PSC: %lu\n", TIM1->PSC);
-    my_printf("TIM1 ARR: %lu\n", TIM1->ARR);
-    uint32_t tim1_freq = HAL_RCC_GetPCLK1Freq() / ((TIM1->PSC + 1) * (TIM1->ARR + 1));
-    my_printf("TIM1 output: %lu Hz\n", tim1_freq);
-
+  my_printf("\nTimer test:\n");
+  my_printf("TIM1 input: %lu Hz\n", HAL_RCC_GetPCLK1Freq());
+  my_printf("TIM1 PSC: %lu\n", TIM1->PSC);
+  my_printf("TIM1 ARR: %lu\n", TIM1->ARR);
+  uint32_t tim1_freq = HAL_RCC_GetPCLK1Freq() / ((TIM1->PSC + 1) * (TIM1->ARR + 1));
+  my_printf("TIM1 output: %lu Hz\n", tim1_freq);
+#endif
 
   /* USER CODE END 2 */
 
   /* Infinite loop */
   /* USER CODE BEGIN WHILE */
 
-    my_printf("System ready - waiting for CAN data...\n");
+#ifdef DEBUG
+  my_printf("System ready - waiting for CAN data...\n");
+#endif
 
-// Правильная инициализация структур
-whl_chnl fl_whl_s = {numFL, &htim1, 0, 24, 0, 0, 0, 0, 0, 0};
-whl_chnl fr_whl_s = {numFR, &htim2, 0, 12, 0, 0, 0, 0, 0, 0};
-whl_chnl rl_whl_s = {numRL, &htim3, 0, 24, 0, 0, 0, 0, 0, 0};
-whl_chnl rr_whl_s = {numRR, &htim4, 0, 24, 0, 0, 0, 0, 0, 0};
+  // Инициализация структур для колес
+  whl_chnl fl_whl_s = {numFL, &htim1, 0, 24, 0, 0, 0, 0, 0, 0};
+  whl_chnl fr_whl_s = {numFR, &htim2, 0, 12, 0, 0, 0, 0, 0, 0};
+  whl_chnl rl_whl_s = {numRL, &htim3, 0, 24, 0, 0, 0, 0, 0, 0};
+  whl_chnl rr_whl_s = {numRR, &htim4, 0, 24, 0, 0, 0, 0, 0, 0};
 
-    whl_chnl *p_fl_whl = &fl_whl_s;
-    whl_chnl *p_fr_whl = &fr_whl_s;
-    whl_chnl *p_rl_whl = &rl_whl_s;
-    whl_chnl *p_rr_whl = &rr_whl_s;
+  whl_arr[numFL] = &fl_whl_s;
+  whl_arr[numFR] = &fr_whl_s;
+  whl_arr[numRL] = &rl_whl_s;
+  whl_arr[numRR] = &rr_whl_s;
 
-    whl_arr[numFL] = p_fl_whl;
-    whl_arr[numFR] = p_fr_whl;
-    whl_arr[numRL] = p_rl_whl;
-    whl_arr[numRR] = p_rr_whl;
+  for(int i = 0; i < 4; i++) {
+      whl_arr[i]->pending_update = 0;
+      whl_arr[i]->target_psc = 0;
+      whl_arr[i]->target_arr = 0;
+  }
 
-    for(int i = 0; i < 4; i++) {
-        whl_arr[i]->pending_update = 0;
-        whl_arr[i]->target_psc = 0;
-        whl_arr[i]->target_arr = 0;
-    }
+  set_new_speeds(0,0,0,0, whl_arr);
 
-    set_new_speeds(0,0,0,0, whl_arr);
+  HAL_GPIO_WritePin(GPIOA, EXT_LED_Pin, GPIO_PIN_SET);
 
-    HAL_GPIO_WritePin(GPIOA, EXT_LED_Pin, GPIO_PIN_SET);
+#ifdef DEBUG
+  test_rpm_calculation();
+#endif
 
-test_rpm_calculation();   //# тестовая функция, вызвать при запуске.
-    
-    /* USER CODE BEGIN WHILE */
-// ============================================
-// ГЛАВНЫЙ Ц�?КЛ - ОПТ�?М�?З�?РОВАННЫЙ
-// ============================================
-
-while (1) {
-
-
-
-
-    // ===== DEBUG =====
-    // Временный дебаг
+  /* USER CODE BEGIN WHILE */
+  while (1) {
+#ifdef DEBUG
     static uint32_t last_debug = 0;
     if(HAL_GetTick() - last_debug > 500) {
         last_debug = HAL_GetTick();
@@ -667,61 +582,36 @@ while (1) {
                      whl_arr[3]->prev_speed);
         }
     }
-    // ===== END DEBUG =====
+#endif
 
-
-
-
-
-
-
-
-    // ===== CAN ОБРАБОТКА =====
     process_can_in_main();
     
-    // ===== RPM обработка =====
     if (freshCanMsg == 1) {
         freshCanMsg = 0;
         
         if(g_system_state.current_mode == MODE_RPM_DYNAMIC) {
-            // Парсим RPM - БЫСТРО, без printf
             int vFLrpm = ((uint16_t)canRX[0] << 8) | canRX[1];
             int vFRrpm = ((uint16_t)canRX[2] << 8) | canRX[3];
             int vRLrpm = ((uint16_t)canRX[4] << 8) | canRX[5];
             int vRRrpm = ((uint16_t)canRX[6] << 8) | canRX[7];
             
-            // Устанавливаем скорости
             set_new_speeds(vFLrpm, vFRrpm, vRLrpm, vRRrpm, whl_arr);
             
-            // === КЛЮЧЕВОЙ МОМЕНТ: включаем флаг что RPM активен ===
             g_system_state.rpm_mode_active = 1;
             
-            // Управляем LED через это
             can_active_receiving = 1;
-            recievingcounger = 4;  // 4 × 100ms = 400ms
+            recievingcounger = 4;
             
-            // Обновляем время последней команды
             g_system_state.last_can_command_time = HAL_GetTick();
         }
     }
     
-    // ===== Обработка по режимам =====
-    switch(g_system_state.current_mode) {
-        default:
-            break;
-    }
-    
-    // ===== Обновление индикации =====
     update_system_indicators();
     
-    // ===== Flag100 =====
     if (ms100Flag > 0) {
         ms100Flag = 0;
         HAL_GPIO_TogglePin(GPIOB, Out_1_Pin);
     }
-    
-    // УБРАТЬ print_timer_status() из цикла!
-    // Оставить только для отладки фиксированного режима
 
     /* USER CODE END WHILE */
 
@@ -782,7 +672,6 @@ void SystemClock_Config(void)
   */
 static void MX_FDCAN1_Init(void)
 {
-
   /* USER CODE BEGIN FDCAN1_Init 0 */
 
   /* USER CODE END FDCAN1_Init 0 */
@@ -815,7 +704,6 @@ static void MX_FDCAN1_Init(void)
   /* USER CODE BEGIN FDCAN1_Init 2 */
 
   /* USER CODE END FDCAN1_Init 2 */
-
 }
 
 /**
@@ -825,7 +713,6 @@ static void MX_FDCAN1_Init(void)
   */
 static void MX_TIM1_Init(void)
 {
-
   /* USER CODE BEGIN TIM1_Init 0 */
 
   /* USER CODE END TIM1_Init 0 */
@@ -862,7 +749,6 @@ static void MX_TIM1_Init(void)
   /* USER CODE BEGIN TIM1_Init 2 */
 
   /* USER CODE END TIM1_Init 2 */
-
 }
 
 /**
@@ -872,7 +758,6 @@ static void MX_TIM1_Init(void)
   */
 static void MX_TIM2_Init(void)
 {
-
   /* USER CODE BEGIN TIM2_Init 0 */
 
   /* USER CODE END TIM2_Init 0 */
@@ -921,7 +806,6 @@ static void MX_TIM2_Init(void)
 
   /* USER CODE END TIM2_Init 2 */
   HAL_TIM_MspPostInit(&htim2);
-
 }
 
 /**
@@ -931,7 +815,6 @@ static void MX_TIM2_Init(void)
   */
 static void MX_TIM3_Init(void)
 {
-
   /* USER CODE BEGIN TIM3_Init 0 */
 
   /* USER CODE END TIM3_Init 0 */
@@ -966,7 +849,6 @@ static void MX_TIM3_Init(void)
   /* USER CODE BEGIN TIM3_Init 2 */
 
   /* USER CODE END TIM3_Init 2 */
-
 }
 
 /**
@@ -976,7 +858,6 @@ static void MX_TIM3_Init(void)
   */
 static void MX_TIM4_Init(void)
 {
-
   /* USER CODE BEGIN TIM4_Init 0 */
 
   /* USER CODE END TIM4_Init 0 */
@@ -1011,7 +892,6 @@ static void MX_TIM4_Init(void)
   /* USER CODE BEGIN TIM4_Init 2 */
 
   /* USER CODE END TIM4_Init 2 */
-
 }
 
 /**
@@ -1021,7 +901,6 @@ static void MX_TIM4_Init(void)
   */
 static void MX_TIM6_Init(void)
 {
-
   /* USER CODE BEGIN TIM6_Init 0 */
 
   /* USER CODE END TIM6_Init 0 */
@@ -1049,7 +928,6 @@ static void MX_TIM6_Init(void)
   /* USER CODE BEGIN TIM6_Init 2 */
 
   /* USER CODE END TIM6_Init 2 */
-
 }
 
 /**
@@ -1059,7 +937,6 @@ static void MX_TIM6_Init(void)
   */
 static void MX_TIM8_Init(void)
 {
-
   /* USER CODE BEGIN TIM8_Init 0 */
 
   /* USER CODE END TIM8_Init 0 */
@@ -1096,7 +973,6 @@ static void MX_TIM8_Init(void)
   /* USER CODE BEGIN TIM8_Init 2 */
 
   /* USER CODE END TIM8_Init 2 */
-
 }
 
 /**
@@ -1106,7 +982,6 @@ static void MX_TIM8_Init(void)
   */
 static void MX_USART1_UART_Init(void)
 {
-
   /* USER CODE BEGIN USART1_Init 0 */
 
   /* USER CODE END USART1_Init 0 */
@@ -1144,7 +1019,6 @@ static void MX_USART1_UART_Init(void)
   /* USER CODE BEGIN USART1_Init 2 */
 
   /* USER CODE END USART1_Init 2 */
-
 }
 
 /**
@@ -1209,169 +1083,35 @@ static void MX_GPIO_Init(void)
 
 /* USER CODE BEGIN 4 */
 
-// ============================================
-// ОБНОВЛЕН�?Е �?НД�?КАЦ�?�? С�?СТЕМЫ
-// ============================================
-
-void update_system_indicators(void)
-{
-    static uint32_t last_update = 0;
-    uint32_t current_time = HAL_GetTick();
-    
-    // Обновляем индикаторы не чаще чем каждые 10ms
-    if(current_time - last_update < 10) {
-        return;
-    }
-    last_update = current_time;
-    
-    // Основная обработка индикации LED по режимам
-    switch(g_system_state.current_mode) {
-        
-        case MODE_BOOT:
-            // BOOT режим: одна вспышка 1500ms, потом выключен
-            if(!g_system_state.led_boot_flashed) {
-                // Первый раз включаем LED
-                HAL_GPIO_WritePin(GPIOA, EXT_LED_Pin, GPIO_PIN_RESET);  // ON
-                g_system_state.led_boot_start_time = current_time;
-                g_system_state.led_boot_flashed = 1;
-            }
-            
-            // Проверяем прошло ли 1500ms
-            if(current_time - g_system_state.led_boot_start_time >= 1500) {
-                // Выключаем LED и больше не трогаем в BOOT режиме
-                HAL_GPIO_WritePin(GPIOA, EXT_LED_Pin, GPIO_PIN_SET);  // OFF
-            }
-            break;
-            
-        case MODE_RPM_DYNAMIC:
-            // LED управляется через can_active_receiving в main loop
-            // НЕ МИГАЕМ, пока нет данных
-            if(!g_system_state.rpm_mode_active) {
-                // Нет данных - LED выключен
-                HAL_GPIO_WritePin(GPIOA, EXT_LED_Pin, GPIO_PIN_SET);
-            }
-            // Если данные есть - LED управляется через recievingcounger в TIM8
-            break;
-            
-        case MODE_FIXED_FREQUENCY:
-            // Медленное мигание 1 Hz (500ms период)
-            led_blink_pattern(current_time, 500);
-            break;
-            
-        case MODE_HI_IMPEDANCE:
-            // Очень медленное мигание 0.2 Hz (2500ms период)
-            led_blink_pattern(current_time, 2500);
-            break;
-            
-        case MODE_DISABLED:
-            // LED выключен
-            HAL_GPIO_WritePin(GPIOA, EXT_LED_Pin, GPIO_PIN_SET);
-            break;
-            
-        case MODE_ERROR:
-            // Быстрое мигание 10 Гц (50ms период)
-            led_blink_pattern(current_time, 50);
-            break;
-            
-        default:
-            // Неизвестный режим - LED выключен
-            HAL_GPIO_WritePin(GPIOA, EXT_LED_Pin, GPIO_PIN_SET);
-            break;
-    }
-    
-    // Здесь можно добавить обработку других индикаторов (дисплей, доп. LED и т.д.)
-    // ...
-}
-
-// Реализация вспомогательной функции
-static void led_blink_pattern(uint32_t current_time, uint32_t interval_ms)
-{
-    if(current_time - g_system_state.led_last_toggle_time >= interval_ms) {
-        g_system_state.led_state = !g_system_state.led_state;
-        g_system_state.led_last_toggle_time = current_time;
-        
-        if(g_system_state.led_state) {
-            HAL_GPIO_WritePin(GPIOA, EXT_LED_Pin, GPIO_PIN_RESET);  // ON
-        } else {
-            HAL_GPIO_WritePin(GPIOA, EXT_LED_Pin, GPIO_PIN_SET);    // OFF
-        }
-    }
-}
-
-// ============================================
-// ПРОВЕРКА ЗДОРОВЬЯ С�?СТЕМЫ
-// ============================================
-
-void check_system_health(void)
-{
-    static uint32_t last_check = 0;
-    uint32_t current_time = HAL_GetTick();
-    
-    // Проверяем не чаще чем раз в секунду
-    if(current_time - last_check < 1000) {
-        return;
-    }
-    last_check = current_time;
-    
-    // Проверка "зависания" - если долго нет команд
-    if(g_system_state.current_mode != MODE_RPM_DYNAMIC) {
-        // В режимах, кроме RPM, требуются периодические команды
-        uint32_t time_since_last_cmd = current_time - g_system_state.last_can_command_time;
-        
-        if(time_since_last_cmd > 10000) { // 10 секунд нет команд
-            printf("[WARNING] No CAN commands for %lu seconds\n", time_since_last_cmd / 1000);
-        }
-    }
-    
-    // Раз в 30 секунд выводим статус (для отладки)
-    static uint32_t status_counter = 0;
-    if(++status_counter >= 30) {
-        status_counter = 0;
-        system_print_status();
-    }
-}
-
 static void CANFD1_Set_Filtes(void)
 {
     FDCAN_FilterTypeDef sFilterConfig = {0};
     
-    // ============================================
-    // Ф�?ЛЬТР: принимаем 0x003 (RPM) и 0x004 (команды)
-    // ============================================
     sFilterConfig.IdType = FDCAN_STANDARD_ID;
     sFilterConfig.FilterIndex = 0;
     sFilterConfig.FilterType = FDCAN_FILTER_MASK;
     sFilterConfig.FilterConfig = FDCAN_FILTER_TO_RXFIFO0;
     
-    // ID1 = 0x004 (команды), ID2 = 0x003 (RPM)
-    // Маска: проверяем все биты (0x7FF)
-    sFilterConfig.FilterID1 = 0x004 << 5;  // ID shift left на 5 для Standard ID
-    sFilterConfig.FilterID2 = 0x003 << 5;  // второй ID
+    sFilterConfig.FilterID1 = 0x004 << 5;
+    sFilterConfig.FilterID2 = 0x003 << 5;
     
     if (HAL_FDCAN_ConfigFilter(&hfdcan1, &sFilterConfig) != HAL_OK) {
         Error_Handler();
     }
     
-    // ============================================
-    // ГЛОБАЛЬНЫЙ Ф�?ЛЬТР
-    // ============================================
     if (HAL_FDCAN_ConfigGlobalFilter(&hfdcan1, 
-        FDCAN_REJECT,      // Отклонять стандартные ID не прошедшие фильтр
-        FDCAN_REJECT,      // Отклонять расширенные ID
+        FDCAN_REJECT,
+        FDCAN_REJECT,
         FDCAN_FILTER_REMOTE, 
         FDCAN_FILTER_REMOTE) != HAL_OK) {
         Error_Handler();
     }
 
-    // ============================================
-    // АКТ�?ВАЦ�?Я ПРЕРЫВАН�?Й (ТОЛЬКО RX)
-    // ============================================
     if (HAL_FDCAN_ActivateNotification(&hfdcan1, 
         FDCAN_IT_RX_FIFO0_NEW_MESSAGE, 0) != HAL_OK) {
         Error_Handler();
     }
     
-    // Активируем TX FIFO пустой для отслеживания
     if (HAL_FDCAN_ActivateNotification(&hfdcan1,
         FDCAN_IT_TX_FIFO_EMPTY, 0) != HAL_OK) {
         Error_Handler();
@@ -1381,12 +1121,11 @@ static void CANFD1_Set_Filtes(void)
         Error_Handler();
     }
     
+#ifdef DEBUG
     my_printf("CAN: Classic mode, AutoRetransmission=ENABLED\n");
+#endif
 }
 
-// ============================================
-// HAL_FDCAN_RxFifo0Callback - ТОЛЬКО КОП�?Я ДАННЫХ!
-// ============================================
 void HAL_FDCAN_RxFifo0Callback(FDCAN_HandleTypeDef *hfdcan, uint32_t RxFifo0ITs)
 {
     if ((RxFifo0ITs & FDCAN_IT_RX_FIFO0_NEW_MESSAGE) == 0) {
@@ -1397,11 +1136,13 @@ void HAL_FDCAN_RxFifo0Callback(FDCAN_HandleTypeDef *hfdcan, uint32_t RxFifo0ITs)
     uint8_t data[8];
 
     if (HAL_FDCAN_GetRxMessage(hfdcan, FDCAN_RX_FIFO0, &rxHeader, data) != HAL_OK) {
+#ifdef DEBUG
         my_printf("[CAN ERR] Failed to get RX message\n");
+#endif
         return;
     }
 
-    // Подробный дамп входящего сообщения
+#ifdef DEBUG
     my_printf("[CAN RX] ID: 0x%04X, DLC: %d, Data: ", 
               rxHeader.Identifier, 
               rxHeader.DataLength >> 16);
@@ -1410,28 +1151,21 @@ void HAL_FDCAN_RxFifo0Callback(FDCAN_HandleTypeDef *hfdcan, uint32_t RxFifo0ITs)
         my_printf("%02X ", data[i]);
     }
     my_printf("\n");
+#endif
 
-    // КОП�?РОВАТЬ ДАННЫЕ В ГЛОБАЛЬНУЮ СТРУКТУРУ
     can_rx_msg.id = rxHeader.Identifier;
     can_rx_msg.dlc = rxHeader.DataLength >> 16;
     memcpy(can_rx_msg.data, data, 8);
 
-    // УСТАНОВ�?ТЬ ФЛАГ
     can_rx_pending = 1;
 }
 
-
-// ============================================
-// process_can_in_main - обработка CAN в главном цикле
-// ============================================
 void process_can_in_main(void)
 {
-    // 1. Обработка принятых сообщений
     if (can_rx_pending) {
         can_rx_pending = 0;
         
         if (can_rx_msg.id == 0x003) {
-            // RPM данные
             if(g_system_state.current_mode == MODE_RPM_DYNAMIC) {
                 freshCanMsg = 1;
                 memcpy(canRX, can_rx_msg.data, 8);
@@ -1442,13 +1176,11 @@ void process_can_in_main(void)
         }
     }
     
-    // 2. Обработка отложенного Hi-Z (в main loop, не в прерывании!)
     if (g_system_state.pending_hi_z) {
         g_system_state.pending_hi_z = 0;
         enter_hi_impedance_mode();
     }
     
-    // 3. Отправка статуса по запросу
     if (can_tx_status_pending) {
         if (HAL_FDCAN_GetTxFifoFreeLevel(&hfdcan1) > 0) {
             can_tx_status_pending = 0;
@@ -1456,7 +1188,6 @@ void process_can_in_main(void)
         }
     }
     
-    // 4. Отправка ошибок
     if (can_tx_error_pending) {
         if (HAL_FDCAN_GetTxFifoFreeLevel(&hfdcan1) > 0) {
             can_tx_error_pending = 0;
@@ -1465,6 +1196,70 @@ void process_can_in_main(void)
     }
 }
 
+static void led_blink_pattern(uint32_t current_time, uint32_t interval_ms)
+{
+    if(current_time - g_system_state.led_last_toggle_time >= interval_ms) {
+        g_system_state.led_state = !g_system_state.led_state;
+        g_system_state.led_last_toggle_time = current_time;
+        
+        if(g_system_state.led_state) {
+            HAL_GPIO_WritePin(GPIOA, EXT_LED_Pin, GPIO_PIN_RESET);
+        } else {
+            HAL_GPIO_WritePin(GPIOA, EXT_LED_Pin, GPIO_PIN_SET);
+        }
+    }
+}
+
+void update_system_indicators(void)
+{
+    static uint32_t last_update = 0;
+    uint32_t current_time = HAL_GetTick();
+    
+    if(current_time - last_update < 10) {
+        return;
+    }
+    last_update = current_time;
+    
+    switch(g_system_state.current_mode) {
+        case MODE_BOOT:
+            if(!g_system_state.led_boot_flashed) {
+                HAL_GPIO_WritePin(GPIOA, EXT_LED_Pin, GPIO_PIN_RESET);
+                g_system_state.led_boot_start_time = current_time;
+                g_system_state.led_boot_flashed = 1;
+            }
+            
+            if(current_time - g_system_state.led_boot_start_time >= 1500) {
+                HAL_GPIO_WritePin(GPIOA, EXT_LED_Pin, GPIO_PIN_SET);
+            }
+            break;
+            
+        case MODE_RPM_DYNAMIC:
+            if(!g_system_state.rpm_mode_active) {
+                HAL_GPIO_WritePin(GPIOA, EXT_LED_Pin, GPIO_PIN_SET);
+            }
+            break;
+            
+        case MODE_FIXED_FREQUENCY:
+            led_blink_pattern(current_time, 500);
+            break;
+            
+        case MODE_HI_IMPEDANCE:
+            led_blink_pattern(current_time, 2500);
+            break;
+            
+        case MODE_DISABLED:
+            HAL_GPIO_WritePin(GPIOA, EXT_LED_Pin, GPIO_PIN_SET);
+            break;
+            
+        case MODE_ERROR:
+            led_blink_pattern(current_time, 50);
+            break;
+            
+        default:
+            HAL_GPIO_WritePin(GPIOA, EXT_LED_Pin, GPIO_PIN_SET);
+            break;
+    }
+}
 
 /* USER CODE END 4 */
 
@@ -1475,9 +1270,9 @@ void process_can_in_main(void)
 void Error_Handler(void)
 {
   /* USER CODE BEGIN Error_Handler_Debug */
-    __disable_irq();
-    while (1) {
-    }
+  __disable_irq();
+  while (1) {
+  }
   /* USER CODE END Error_Handler_Debug */
 }
 
@@ -1492,7 +1287,9 @@ void Error_Handler(void)
 void assert_failed(uint8_t *file, uint32_t line)
 {
   /* USER CODE BEGIN 6 */
-    my_printf("Wrong parameters value: file %s on line %d\r\n", file, line);
+#ifdef DEBUG
+  my_printf("Wrong parameters value: file %s on line %d\r\n", file, line);
+#endif
   /* USER CODE END 6 */
 }
 #endif /* USE_FULL_ASSERT */
