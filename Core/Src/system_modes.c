@@ -350,6 +350,8 @@ void exit_hi_impedance_mode(void)
     my_printf("[HI-Z] Exiting Hi-Z mode\n");
 #endif
 
+    my_printf("[HI-Z] Exiting Hi-Z mode\n");
+
     // 1. ВКЛЮЧАЕМ ТАКТИРОВАНИЕ ТАЙМЕРОВ
     __HAL_RCC_TIM1_CLK_ENABLE();
     __HAL_RCC_TIM2_CLK_ENABLE();
@@ -427,7 +429,5 @@ void exit_hi_impedance_mode(void)
     g_system_state.hi_impedance_active = 0;
 
 
-#ifdef DEBUG_SYSTEM
     my_printf("[HI-Z] Timers ready (not started yet)\n");
-#endif
 }
