@@ -85,6 +85,11 @@ const char* get_mode_name(operation_mode_t mode);
 void system_print_status(void);
 uint32_t system_get_uptime_seconds(void);
 
+
+// Hi-Z режим
+void enter_hi_impedance_mode(void);
+void exit_hi_impedance_mode(void);
+
 // Утилиты для работы с каналами
 void set_channel_active(uint8_t channel_num, uint8_t active);
 uint8_t is_channel_active(uint8_t channel_num);

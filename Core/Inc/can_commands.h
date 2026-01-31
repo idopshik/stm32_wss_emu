@@ -10,6 +10,16 @@
 #ifndef CAN_COMMANDS_H
 #define CAN_COMMANDS_H
 
+// ============================================
+// НАСТРОЙКИ ОТЛАДКИ
+// ============================================
+
+// Раскомментируйте нужные дебаг-флаги:
+#define DEBUG_CAN_COMMANDS    // Дебаг обработки команд
+#define DEBUG_CAN_TX          // Дебаг отправки сообщений  
+#define DEBUG_CAN_ERROR       // Дебаг ошибок
+#define DEBUG_CALC            // Дебаг расчётов PSC/ARR
+
 #include "main.h"
 #include "system_modes.h"
 #include <stdint.h>
@@ -136,9 +146,6 @@ void process_can_command(uint8_t* data);
 void send_system_status(void);
 void send_error_response(uint8_t error_code);
 
-// Hi-Z режим
-void enter_hi_impedance_mode(void);
-void exit_hi_impedance_mode(void);
 
 // Расчёт PSC/ARR
 void calculate_optimal_psc_arr_16bit(float freq_hz, uint16_t *psc, uint16_t *arr);

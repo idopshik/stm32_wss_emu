@@ -572,6 +572,36 @@ void diagnostic_gpio_status(void) {
     }
 }
 
+void diagnostic_alternative_functions(void) {
+    static uint32_t last_af_debug = 0;
+    uint32_t current_time = HAL_GetTick();
+
+    if(current_time - last_af_debug > 3000) {
+        last_af_debug = current_time;
+        
+        my_printf("\n=== ALTERNATIVE FUNCTIONS STATUS ===\n");
+        
+        // PA8 (TIM1_CH1)
+        my_printf("PA8 AF: %lu (AFRL=%08lX)\n", 
+                  (GPIOA->AFR[0] >> 0) & 0x0F, 
+                  GPIOA->AFR[0]);
+        
+        // PA15 (TIM2_CH1)
+        my_printf("PA15 AF: %lu (AFRH=%08lX)\n", 
+                  (GPIOA->AFR[1] >> 28) & 0x0F, 
+                  GPIOA->AFR[1]);
+        
+        // PA6 (TIM3_CH1)
+        my_printf("PA6 AF: %lu (AFRL=%08lX)\n", 
+                  (GPIOA->AFR[0] >> 24) & 0x0F, 
+                  GPIOA->AFR[0]);
+        
+        // Проверка SYSCFG
+        my_printf("EXTI PA15 line: %lu\n", 
+                  (SYSCFG->EXTICR[3] >> 12) & 0x0F);
+    }
+}
+
 /* USER CODE END 0 */
 
 /**
@@ -733,6 +763,7 @@ int main(void)
     diagnostic_tim4_status();
     diagnostic_mode_status();
     diagnostic_gpio_status();
+    diagnostic_alternative_functions();
 
 #ifdef DEBUG
     static uint32_t last_debug = 0;

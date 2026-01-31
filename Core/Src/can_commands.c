@@ -1,12 +1,10 @@
 /**
- * can_commands.c - VERSION 3 (CLEANED UP)
+ * can_commands.c - VERSION 3.2 (DEBUG)
  * 
- * Изменения:
- * - УДАЛЕН весь analog_follower код
- * - Hi-Z режим с SSR (PB10) управлением
- * - Два режима FIXED_FREQUENCY: ALL_FOUR (16-bit) и ONLY_FR (32-bit TIM2)
- * - LED в RPM режиме: не мигает при старте (фиксим после получения первого сообщения)
- * - Убрана минимизация printf (добавим дебаг флаги позже)
+ * Умный дебаг:
+ * - Только критически важные вызовы функций
+ * - Ключевые параметры в важных местах
+ * - Без засорения вывода
  */
 
 #include "can_commands.h"
@@ -14,13 +12,15 @@
 #include <string.h>
 #include <stdio.h>
 #include <math.h>
+#include <stdarg.h>
+#include "stm32g4xx_hal.h"
 
 #ifndef APB1_CLK
 #define APB1_CLK 150000000
 #endif
 
-extern void my_printf(const char *fmt, ...);
-extern FDCAN_HandleTypeDef hfdcan1;
+// Объявление внешних переменных из main.c
+extern FDCAN_HandleTypeDef hfdcan1;  // ← ВАЖНО: объявляем hfdcan1
 
 // Локальные прототипы
 void send_can_message(uint32_t id, uint8_t* data, uint8_t length);
@@ -28,17 +28,68 @@ void calculate_optimal_psc_arr_16bit(float freq_hz, uint16_t *psc, uint16_t *arr
 void calculate_optimal_psc_arr_32bit(float freq_hz, uint16_t *psc, uint32_t *arr);
 
 // ============================================
+// ВСПОМОГАТЕЛЬНЫЕ ФУНКЦИИ
+// ============================================
+
+/**
+ * @brief Обработка выхода из Hi-Z режима для всех команд
+ */
+static void handle_hi_z_exit_if_needed(void)
+{
+    // Если активен Hi-Z режим - выходим из него
+    if(g_system_state.hi_impedance_active) {
+#ifdef DEBUG_CAN_COMMANDS
+        printf("[CAN] Exiting Hi-Z mode (was active)\n");
+#endif
+        exit_hi_impedance_mode();
+    }
+    
+    // Если есть ожидающий Hi-Z вход - отменяем его
+    if(g_system_state.pending_hi_z) {
+#ifdef DEBUG_CAN_COMMANDS
+        printf("[CAN] Cancelling pending Hi-Z\n");
+#endif
+        g_system_state.pending_hi_z = 0;
+    }
+}
+
+/**
+ * @brief Обновление маски каналов
+ */
+static void update_channel_mask(uint8_t mask)
+{
+#ifdef DEBUG_CAN_COMMANDS
+    printf("[CAN] Updating channel mask: 0x%02X -> 0x%02X\n", 
+           g_system_state.channel_mask, mask);
+#endif
+    
+    g_system_state.channel_mask = mask;
+    
+    // Для каналов вне маски гарантированно отключаем
+    for(int i = 0; i < 4; i++) {
+        if(!(mask & (1 << i))) {
+            set_channel_active(i, 0);
+        }
+    }
+}
+
+// ============================================
 // ОБРАБОТКА CAN КОМАНД
 // ============================================
 
 void process_can_command(uint8_t* data)
 {
-    if(data == NULL) return;
+    if(data == NULL) {
+#ifdef DEBUG_CAN_ERROR
+        printf("[CAN ERROR] NULL data pointer\n");
+#endif
+        return;
+    }
     
     uint8_t command = data[0];
     
 #ifdef DEBUG_CAN_COMMANDS
-    my_printf("[CAN] Command: 0x%02X\n", command);
+    printf("[CAN] Processing command: 0x%02X\n", command);
 #endif
     
     switch(command) {
@@ -48,21 +99,22 @@ void process_can_command(uint8_t* data)
             uint8_t channel_mask = data[1];
             
 #ifdef DEBUG_CAN_COMMANDS
-            my_printf("[CAN] DISABLE_OUTPUT, mask: 0x%02X\n", channel_mask);
+            printf("[CAN] DISABLE_OUTPUT, mask: 0x%02X\n", channel_mask);
 #endif
             
+            handle_hi_z_exit_if_needed();
+            
+            // Управление каналами
             if(channel_mask == 0xFF) {
                 set_all_channels_active(0);
+                update_channel_mask(0x00);
             } else {
                 for(int i = 0; i < 4; i++) {
                     if(channel_mask & (1 << i)) {
                         set_channel_active(i, 0);
                     }
                 }
-            }
-            
-            if(g_system_state.hi_impedance_active) {
-                exit_hi_impedance_mode();
+                update_channel_mask(0x00);
             }
             
             system_switch_mode(MODE_DISABLED);
@@ -74,21 +126,22 @@ void process_can_command(uint8_t* data)
             uint8_t channel_mask = data[1];
             
 #ifdef DEBUG_CAN_COMMANDS
-            my_printf("[CAN] RPM_MODE, mask: 0x%02X\n", channel_mask);
+            printf("[CAN] RPM_MODE, mask: 0x%02X\n", channel_mask);
 #endif
             
-            if(g_system_state.hi_impedance_active) {
-                exit_hi_impedance_mode();
-            }
+            handle_hi_z_exit_if_needed();
             
+            // Управление каналами
             if(channel_mask == 0xFF) {
                 set_all_channels_active(1);
+                update_channel_mask(0x0F);
             } else {
                 for(int i = 0; i < 4; i++) {
                     if(channel_mask & (1 << i)) {
                         set_channel_active(i, 1);
                     }
                 }
+                update_channel_mask(channel_mask);
             }
             
             system_switch_mode(MODE_RPM_DYNAMIC);
@@ -99,23 +152,22 @@ void process_can_command(uint8_t* data)
         case CMD_SET_FIXED_FREQ: {
             uint8_t channel_mask = data[1];
             
-            // Частота в миллигерцах (uint32_t LE)
+            // Частота в миллигерцах
             uint32_t freq_mhz = ((uint32_t)data[2]) |
                                 ((uint32_t)data[3] << 8) |
                                 ((uint32_t)data[4] << 16) |
                                 ((uint32_t)data[5] << 24);
             
-            // Преобразуем в Hz (float для точности)
             float freq_hz = freq_mhz / 1000.0f;
             
 #ifdef DEBUG_CAN_COMMANDS
-            my_printf("[CAN] FIXED_FREQ: %.3f Hz (mask=0x%02X)\n", freq_hz, channel_mask);
+            printf("[CAN] FIXED_FREQ: %.3f Hz, mask: 0x%02X\n", freq_hz, channel_mask);
 #endif
             
             // Проверка диапазона
             if(freq_mhz < 1000 || freq_mhz > 4500000) {
 #ifdef DEBUG_CAN_ERROR
-                my_printf("[CAN] ERROR: Frequency out of range: %lu mHz\n", freq_mhz);
+                printf("[CAN ERROR] Frequency out of range: %lu mHz\n", freq_mhz);
 #endif
                 can_tx_error_code = 0x02;
                 can_tx_error_pending = 1;
@@ -125,16 +177,27 @@ void process_can_command(uint8_t* data)
             g_system_state.target_frequency_hz = (uint32_t)freq_hz;
             g_system_state.target_frequency_mhz = freq_mhz;
             
+            handle_hi_z_exit_if_needed();
+            
             if(channel_mask == 0x02) {
-                // ONLY_FR режим: только TIM2 (32-бит)
+                // ONLY_FR режим
+#ifdef DEBUG_CAN_COMMANDS
+                printf("[CAN] ONLY_FR mode (32-bit TIM2)\n");
+#endif
+                
                 uint16_t psc;
                 uint32_t arr_32bit;
                 calculate_optimal_psc_arr_32bit(freq_hz, &psc, &arr_32bit);
                 
                 // Останавливаем другие таймеры
                 TIM1->CR1 &= ~TIM_CR1_CEN;
+                set_channel_active(0, 0);
+                
                 TIM3->CR1 &= ~TIM_CR1_CEN;
+                set_channel_active(2, 0);
+                
                 TIM4->CR1 &= ~TIM_CR1_CEN;
+                set_channel_active(3, 0);
                 
                 // Настройка TIM2
                 TIM2->CR1 &= ~TIM_CR1_CEN;
@@ -143,15 +206,28 @@ void process_can_command(uint8_t* data)
                 TIM2->CNT = 0;
                 TIM2->CR1 |= TIM_CR1_CEN;
                 
+                set_channel_active(1, 1);
+                
+                // Сохраняем параметры
                 g_system_state.psc_values[1] = psc;
                 g_system_state.arr_values[1] = (uint16_t)(arr_32bit & 0xFFFF);
                 g_system_state.arr_values_32bit[1] = arr_32bit;
+                
+                update_channel_mask(0x02);
             }
             else if(channel_mask == 0x0F) {
-                // ALL_FOUR режим: все 4 таймера (16-бит)
+                // ALL_FOUR режим
+#ifdef DEBUG_CAN_COMMANDS
+                printf("[CAN] ALL_FOUR mode (16-bit all timers)\n");
+#endif
+                
                 uint16_t psc, arr_16bit;
                 calculate_optimal_psc_arr_16bit(freq_hz, &psc, &arr_16bit);
                 
+                set_all_channels_active(1);
+                update_channel_mask(0x0F);
+                
+                // Настраиваем все таймеры
                 TIM_TypeDef* timers[4] = {TIM1, TIM2, TIM3, TIM4};
                 for(int i = 0; i < 4; i++) {
                     timers[i]->CR1 &= ~TIM_CR1_CEN;
@@ -166,7 +242,7 @@ void process_can_command(uint8_t* data)
             }
             else {
 #ifdef DEBUG_CAN_ERROR
-                my_printf("[CAN] ERROR: Unsupported channel mask: 0x%02X\n", channel_mask);
+                printf("[CAN ERROR] Unsupported channel mask: 0x%02X\n", channel_mask);
 #endif
                 can_tx_error_code = 0x03;
                 can_tx_error_pending = 1;
@@ -180,19 +256,40 @@ void process_can_command(uint8_t* data)
         // ===== CMD 0x06: HI-IMPEDANCE MODE =====
         case CMD_SET_HI_IMPEDANCE: {
 #ifdef DEBUG_CAN_COMMANDS
-            my_printf("[CAN] HI_IMPEDANCE request\n");
+            printf("[CAN] HI_IMPEDANCE request\n");
 #endif
             
-            // Флаг для обработки в main loop
+            // Проверка состояния
+            if(g_system_state.hi_impedance_active) {
+#ifdef DEBUG_CAN_COMMANDS
+                printf("[CAN] Hi-Z already active, ignoring\n");
+#endif
+                can_tx_status_pending = 1;
+                break;
+            }
+            
+            if(g_system_state.pending_hi_z) {
+#ifdef DEBUG_CAN_COMMANDS
+                printf("[CAN] Hi-Z already pending, ignoring\n");
+#endif
+                can_tx_status_pending = 1;
+                break;
+            }
+            
+            // Устанавливаем флаг
             g_system_state.pending_hi_z = 1;
             can_tx_status_pending = 1;
+            
+#ifdef DEBUG_CAN_COMMANDS
+            printf("[CAN] Hi-Z pending flag set\n");
+#endif
             break;
         }
         
         // ===== CMD 0x07: STATUS REQUEST =====
         case CMD_REQUEST_STATUS: {
 #ifdef DEBUG_CAN_COMMANDS
-            my_printf("[CAN] STATUS_REQUEST\n");
+            printf("[CAN] STATUS_REQUEST\n");
 #endif
             
             can_tx_status_pending = 1;
@@ -202,7 +299,7 @@ void process_can_command(uint8_t* data)
         // ===== НЕИЗВЕСТНАЯ КОМАНДА =====
         default: {
 #ifdef DEBUG_CAN_ERROR
-            my_printf("[CAN] Unknown command: 0x%02X\n", command);
+            printf("[CAN ERROR] Unknown command: 0x%02X\n", command);
 #endif
             can_tx_error_code = 0x01;
             can_tx_error_pending = 1;
@@ -214,177 +311,15 @@ void process_can_command(uint8_t* data)
 }
 
 // ============================================
-// HI-Z РЕЖИМ - ВХОД
-// ============================================
-
-void enter_hi_impedance_mode(void)
-{
-    my_printf("\n[HI-Z] ===== ENTERING HI-IMPEDANCE MODE =====\n");
-    
-    // === 1. ОСТАНАВЛИВАЕМ ВСЕ ТАЙМЕРЫ ===
-    TIM1->CR1 &= ~TIM_CR1_CEN;
-    TIM2->CR1 &= ~TIM_CR1_CEN;
-    TIM3->CR1 &= ~TIM_CR1_CEN;
-    TIM4->CR1 &= ~TIM_CR1_CEN;
-    my_printf("[HI-Z] All timers stopped\n");
-    
-    // === 2. ПЕРЕВОДИМ GPIO В INPUT (Hi-Z) ===
-    GPIO_InitTypeDef GPIO_InitStruct = {0};
-    GPIO_InitStruct.Mode = GPIO_MODE_INPUT;
-    GPIO_InitStruct.Pull = GPIO_NOPULL;
-    GPIO_InitStruct.Speed = GPIO_SPEED_FREQ_LOW;
-    
-    // Явно сбрасываем альтернативные функции
-    // PA8 (TIM1_CH1) - FL
-    GPIO_InitStruct.Pin = GPIO_PIN_8;
-    HAL_GPIO_Init(GPIOA, &GPIO_InitStruct);
-    GPIOA->MODER = (GPIOA->MODER & ~(3UL << 16)) | (0UL << 16);  // Input mode
-    my_printf("[HI-Z] PA8 (FL) → INPUT\n");
-    
-    // PA15 (TIM2_CH1) - FR
-    GPIO_InitStruct.Pin = GPIO_PIN_15;
-    HAL_GPIO_Init(GPIOA, &GPIO_InitStruct);
-    GPIOA->MODER = (GPIOA->MODER & ~(3UL << 30)) | (0UL << 30);  // Input mode
-    my_printf("[HI-Z] PA15 (FR) → INPUT\n");
-    
-    // PA6 (TIM3_CH1) - RL
-    GPIO_InitStruct.Pin = GPIO_PIN_6;
-    HAL_GPIO_Init(GPIOA, &GPIO_InitStruct);
-    GPIOA->MODER = (GPIOA->MODER & ~(3UL << 12)) | (0UL << 12);  // Input mode
-    my_printf("[HI-Z] PA6 (RL) → INPUT\n");
-    
-    // PB6 (TIM4_CH1) - RR
-    GPIO_InitStruct.Pin = GPIO_PIN_6;
-    HAL_GPIO_Init(GPIOB, &GPIO_InitStruct);
-    GPIOB->MODER = (GPIOB->MODER & ~(3UL << 12)) | (0UL << 12);  // Input mode
-    my_printf("[HI-Z] PB6 (RR) → INPUT\n");
-
-    // PB9 - дополнительно
-    GPIO_InitStruct.Pin = GPIO_PIN_9;
-    HAL_GPIO_Init(GPIOB, &GPIO_InitStruct);
-    GPIOB->MODER = (GPIOB->MODER & ~(3UL << 18)) | (0UL << 18);  // Input mode
-    my_printf("[HI-Z] PB9 → INPUT\n");
-    
-    // === 3. ВКЛЮЧАЕМ SOLID STATE RELAY (PB10) ===
-    HAL_GPIO_WritePin(GPIOB, SOLID_RELAY_CONTROL_Pin, GPIO_PIN_SET);
-    my_printf("[HI-Z] SSR Control (PB10) → HIGH (external signal active)\n");
-    
-    // === 4. УСТАНАВЛИВАЕМ ФЛАГИ И РЕЖИМ ===
-    g_system_state.hi_impedance_active = 1;
-    system_switch_mode(MODE_HI_IMPEDANCE);
-    
-    my_printf("[HI-Z] ✓ HI-IMPEDANCE active - safe for external signals\n");
-    my_printf("[HI-Z] ======================================\n\n");
-}
-
-// ============================================
-// HI-Z РЕЖИМ - ВЫХОД
-// ============================================
-
-void exit_hi_impedance_mode(void)
-{
-#ifdef DEBUG_CAN_COMMANDS
-    my_printf("\n[HI-Z] ===== EXITING HI-IMPEDANCE MODE =====\n");
-#endif
-    
-    // === 1. ВЫКЛЮЧАЕМ SOLID STATE RELAY (PB10) ===
-    HAL_GPIO_WritePin(GPIOB, SOLID_RELAY_CONTROL_Pin, GPIO_PIN_RESET);
-#ifdef DEBUG_CAN_COMMANDS
-    my_printf("[HI-Z] SSR Control (PB10) → LOW (STM32 control active)\n");
-#endif
-    
-    // === 2. ВОССТАНАВЛИВАЕМ GPIO КАК ALTERNATE FUNCTION ===
-    GPIO_InitTypeDef GPIO_InitStruct = {0};
-    GPIO_InitStruct.Mode = GPIO_MODE_AF_PP;
-    GPIO_InitStruct.Pull = GPIO_NOPULL;
-    GPIO_InitStruct.Speed = GPIO_SPEED_FREQ_LOW;
-    
-    // PA8 (TIM1_CH1) - AF2
-    GPIO_InitStruct.Pin = GPIO_PIN_8;
-    GPIO_InitStruct.Alternate = GPIO_AF2_TIM1;
-    HAL_GPIO_Init(GPIOA, &GPIO_InitStruct);
-#ifdef DEBUG_CAN_COMMANDS
-    my_printf("[HI-Z] PA8 (FL) → AF2 (TIM1_CH1)\n");
-#endif
-    
-    // PA15 (TIM2_CH1) - AF1
-    GPIO_InitStruct.Pin = GPIO_PIN_15;
-    GPIO_InitStruct.Alternate = GPIO_AF1_TIM2;
-    HAL_GPIO_Init(GPIOA, &GPIO_InitStruct);
-#ifdef DEBUG_CAN_COMMANDS
-    my_printf("[HI-Z] PA15 (FR) → AF1 (TIM2_CH1)\n");
-#endif
-    
-    // PA6 (TIM3_CH1) - AF2
-    GPIO_InitStruct.Pin = GPIO_PIN_6;
-    GPIO_InitStruct.Alternate = GPIO_AF2_TIM3;
-    HAL_GPIO_Init(GPIOA, &GPIO_InitStruct);
-#ifdef DEBUG_CAN_COMMANDS
-    my_printf("[HI-Z] PA6 (RL) → AF2 (TIM3_CH1)\n");
-#endif
-    
-    // PB6 (TIM4_CH1) - AF2
-    GPIO_InitStruct.Pin = GPIO_PIN_6;
-    GPIO_InitStruct.Alternate = GPIO_AF2_TIM4;
-    HAL_GPIO_Init(GPIOB, &GPIO_InitStruct);
-#ifdef DEBUG_CAN_COMMANDS
-    my_printf("[HI-Z] PB6 (RR) → AF2 (TIM4_CH1)\n");
-#endif
-    
-    // === 3. ВОССТАНАВЛИВАЕМ ТАЙМЕРЫ ===
-    if(g_system_state.current_mode == MODE_FIXED_FREQUENCY) {
-#ifdef DEBUG_CAN_COMMANDS
-        my_printf("[HI-Z] Restoring FIXED_FREQUENCY mode...\n");
-#endif
-        
-        // Восстанавливаем последние настройки
-        for(int i = 0; i < 4; i++) {
-            if(g_system_state.channel_mask & (1 << i)) {
-                TIM_TypeDef* TIMx = NULL;
-                switch(i) {
-                    case 0: TIMx = TIM1; break;
-                    case 1: TIMx = TIM2; break;
-                    case 2: TIMx = TIM3; break;
-                    case 3: TIMx = TIM4; break;
-                }
-                
-                if(TIMx != NULL) {
-                    uint16_t psc = g_system_state.psc_values[i];
-                    uint16_t arr = g_system_state.arr_values[i];
-                    
-                    TIMx->CR1 &= ~TIM_CR1_CEN;
-                    TIMx->PSC = psc;
-                    TIMx->ARR = arr;
-                    TIMx->CNT = 0;
-                    TIMx->CR1 |= TIM_CR1_CEN;
-                }
-            }
-        }
-    } else if(g_system_state.current_mode == MODE_RPM_DYNAMIC) {
-#ifdef DEBUG_CAN_COMMANDS
-        my_printf("[HI-Z] Restoring RPM_DYNAMIC mode...\n");
-#endif
-        
-        TIM1->CR1 |= TIM_CR1_CEN;
-        TIM2->CR1 |= TIM_CR1_CEN;
-        TIM3->CR1 |= TIM_CR1_CEN;
-        TIM4->CR1 |= TIM_CR1_CEN;
-    }
-    
-    g_system_state.hi_impedance_active = 0;
-    
-#ifdef DEBUG_CAN_COMMANDS
-    my_printf("[HI-Z] ✓ GPIO restored to timer outputs\n");
-    my_printf("[HI-Z] =====================================\n\n");
-#endif
-}
-
-// ============================================
-// ОТПРАВКА СТАТУСА (ID 0x006)
+// ОТПРАВКА СТАТУСА
 // ============================================
 
 void send_system_status(void)
 {
+#ifdef DEBUG_CAN_TX
+    printf("[CAN TX] Sending system status\n");
+#endif
+    
     uint8_t status_data[8] = {0};
     
     // Byte 0: Текущий режим
@@ -393,42 +328,46 @@ void send_system_status(void)
     // Byte 1: Маска активных каналов
     status_data[1] = g_system_state.channel_mask;
     
-    // Bytes 2-3: Частота ×10 (0.1 Hz разрешение)
+    // Bytes 2-3: Частота ×10
     uint16_t freq_x10 = 0;
+    if(g_system_state.current_mode == MODE_FIXED_FREQUENCY) {
+        freq_x10 = (uint16_t)(g_system_state.target_frequency_hz * 10);
+    }
+    status_data[2] = freq_x10 & 0xFF;
+    status_data[3] = (freq_x10 >> 8) & 0xFF;
     
-    // Bytes 4: Флаги состояния
+    // Byte 4: Флаги состояния
     status_data[4] = 0;
     if(g_system_state.hi_impedance_active) {
-        status_data[4] |= 0x02;  // Бит Hi-Z
+        status_data[4] |= 0x02;
+    }
+    if(g_system_state.pending_hi_z) {
+        status_data[4] |= 0x04;
     }
     
-    // Bytes 5-6: Uptime в секундах (uint16_t LE)
+    // Bytes 5-6: Uptime
     uint32_t uptime = system_get_uptime_seconds();
     if(uptime > 65535) uptime = 65535;
     status_data[5] = uptime & 0xFF;
     status_data[6] = (uptime >> 8) & 0xFF;
     
-    // Byte 7: Резервировано
+    // Byte 7: Reserved
     status_data[7] = 0;
     
     send_can_message(CAN_STATUS_ID, status_data, 8);
-    
-#ifdef DEBUG_CAN_TX
-    my_printf("[STATUS] Mode=%s, Ch=0x%02X, Freq=%.1f Hz, HiZ=%d, Uptime=%lu s\n",
-              get_mode_name(status_data[0]),
-              status_data[1],
-              freq_x10 / 10.0f,
-              (status_data[4] & 0x02) ? 1 : 0,
-              uptime);
-#endif
 }
-    
+
 // ============================================
 // ОТПРАВКА CAN СООБЩЕНИЯ
 // ============================================
 
 void send_can_message(uint32_t id, uint8_t* data, uint8_t length)
 {
+#ifdef DEBUG_CAN_TX
+    printf("[CAN TX] ID: 0x%03lX, Len: %d\n", id, length);
+    // или: printf("[CAN TX] ID: 0x%03X, Len: %d\n", (unsigned int)id, length);
+#endif
+    
     FDCAN_TxHeaderTypeDef TxHeader;
     
     TxHeader.Identifier = id;
@@ -450,11 +389,15 @@ void send_can_message(uint32_t id, uint8_t* data, uint8_t length)
 
 void calculate_optimal_psc_arr_32bit(float freq_hz, uint16_t *psc, uint32_t *arr)
 {
+#ifdef DEBUG_CALC
+    printf("[CALC_32BIT] Start: %.3f Hz\n", freq_hz);
+#endif
+    
     if(freq_hz <= 0 || freq_hz > APB1_CLK) {
         *psc = 0;
         *arr = 1;
-#ifdef DEBUG_CAN_ERROR
-        my_printf("[CALC_32BIT] ERROR: Invalid frequency: %.3f Hz\n", freq_hz);
+#ifdef DEBUG_CALC
+        printf("[CALC_32BIT] ERROR: Invalid frequency\n");
 #endif
         return;
     }
@@ -465,11 +408,9 @@ void calculate_optimal_psc_arr_32bit(float freq_hz, uint16_t *psc, uint32_t *arr
     uint16_t best_psc = 0;
     uint32_t best_arr = 1;
     
-    // Расширенный поиск PSC для максимальной точности
     for(uint32_t p = 0; p <= 65535; p++) {
         uint64_t arr_calc = (target_ticks / (p + 1)) - 1;
         
-        // Для 32-бит таймера максимум ARR = 2^32-1
         if(arr_calc > 0xFFFFFFFFUL) continue;
         if(arr_calc < 1) continue;
         
@@ -483,26 +424,16 @@ void calculate_optimal_psc_arr_32bit(float freq_hz, uint16_t *psc, uint32_t *arr
             best_psc = (uint16_t)p;
             best_arr = (uint32_t)arr_calc;
         }
-        
-        // Если ошибка меньше 0.001 Гц - отлично!
-        float actual_freq = (float)APB1_CLK / ((best_psc + 1) * (best_arr + 1));
-        if(fabsf(actual_freq - freq_hz) / freq_hz < 0.001) {
-            break;
-        }
     }
     
     *psc = best_psc;
     *arr = best_arr;
     
-#ifdef DEBUG_CAN_COMMANDS
+#ifdef DEBUG_CALC
     float actual_freq = (float)APB1_CLK / ((best_psc + 1) * (best_arr + 1));
-    float error_hz = fabsf(actual_freq - freq_hz);
-    float error_pct = (error_hz / freq_hz) * 100.0f;
-    
-    my_printf("[CALC_32BIT] Target: %.3f Hz\n", freq_hz);
-    my_printf("[CALC_32BIT] Actual: %.3f Hz\n", actual_freq);
-    my_printf("[CALC_32BIT] PSC=%u, ARR=%lu (32-bit)\n", best_psc, best_arr);
-    my_printf("[CALC_32BIT] Error: %.6f%% (%.6f Hz)\n", error_pct, error_hz);
+    float error_pct = fabsf(actual_freq - freq_hz) / freq_hz * 100.0f;
+    printf("[CALC_32BIT] Result: PSC=%u, ARR=%lu (%.3f Hz, error: %.4f%%)\n",
+           best_psc, best_arr, actual_freq, error_pct);
 #endif
 }
 
@@ -512,11 +443,15 @@ void calculate_optimal_psc_arr_32bit(float freq_hz, uint16_t *psc, uint32_t *arr
 
 void calculate_optimal_psc_arr_16bit(float freq_hz, uint16_t *psc, uint16_t *arr)
 {
+#ifdef DEBUG_CALC
+    printf("[CALC_16BIT] Start: %.3f Hz\n", freq_hz);
+#endif
+    
     if(freq_hz <= 0 || freq_hz > APB1_CLK) {
         *psc = 0;
         *arr = 1;
-#ifdef DEBUG_CAN_ERROR
-        my_printf("[CALC_16BIT] ERROR: Invalid frequency: %.3f Hz\n", freq_hz);
+#ifdef DEBUG_CALC
+        printf("[CALC_16BIT] ERROR: Invalid frequency\n");
 #endif
         return;
     }
@@ -530,7 +465,6 @@ void calculate_optimal_psc_arr_16bit(float freq_hz, uint16_t *psc, uint16_t *arr
     for(uint32_t p = 0; p <= 65535; p++) {
         uint32_t arr_calc = (target_ticks / (p + 1)) - 1;
         
-        // Ограничение для 16-bit таймеров
         if(arr_calc > 65535) continue;
         if(arr_calc < 1) continue;
         
@@ -544,26 +478,16 @@ void calculate_optimal_psc_arr_16bit(float freq_hz, uint16_t *psc, uint16_t *arr
             best_psc = (uint16_t)p;
             best_arr = (uint16_t)arr_calc;
         }
-        
-        // Если ошибка меньше 0.01% - достаточно точно
-        float actual_freq = (float)APB1_CLK / ((best_psc + 1) * (best_arr + 1));
-        if(fabsf(actual_freq - freq_hz) / freq_hz < 0.0001) {
-            break;
-        }
     }
     
     *psc = best_psc;
     *arr = best_arr;
     
-#ifdef DEBUG_CAN_COMMANDS
+#ifdef DEBUG_CALC
     float actual_freq = (float)APB1_CLK / ((best_psc + 1) * (best_arr + 1));
-    float error_hz = fabsf(actual_freq - freq_hz);
-    float error_pct = (error_hz / freq_hz) * 100.0f;
-    
-    my_printf("[CALC_16BIT] Target: %.3f Hz\n", freq_hz);
-    my_printf("[CALC_16BIT] Actual: %.3f Hz\n", actual_freq);
-    my_printf("[CALC_16BIT] PSC=%u, ARR=%u (16-bit)\n", best_psc, best_arr);
-    my_printf("[CALC_16BIT] Error: %.6f%% (%.6f Hz)\n", error_pct, error_hz);
+    float error_pct = fabsf(actual_freq - freq_hz) / freq_hz * 100.0f;
+    printf("[CALC_16BIT] Result: PSC=%u, ARR=%u (%.3f Hz, error: %.4f%%)\n",
+           best_psc, best_arr, actual_freq, error_pct);
 #endif
 }
 
@@ -573,13 +497,13 @@ void calculate_optimal_psc_arr_16bit(float freq_hz, uint16_t *psc, uint16_t *arr
 
 void send_error_response(uint8_t error_code)
 {
+#ifdef DEBUG_CAN_TX
+    printf("[CAN TX ERROR] Sending error code: 0x%02X\n", error_code);
+#endif
+    
     uint8_t error_data[8] = {0};
     error_data[0] = 0xFF;
     error_data[1] = error_code;
     
     send_can_message(CAN_STATUS_ID, error_data, 8);
-    
-#ifdef DEBUG_CAN_ERROR
-    my_printf("[CAN_ERROR] Code: 0x%02X\n", error_code);
-#endif
 }

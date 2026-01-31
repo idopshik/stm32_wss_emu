@@ -7,8 +7,10 @@
  * - Добавлен флаг rpm_mode_active для LED логики
  */
 
-#include "system_modes.h"
 #include <stdio.h>
+#include "main.h"
+#include "stm32g4xx_hal.h"
+#include "system_modes.h"
 
 extern void my_printf(const char *fmt, ...);
 
@@ -290,5 +292,93 @@ void set_all_channels_active(uint8_t active)
     
 #ifdef DEBUG_SYSTEM
     my_printf("[SYSTEM] All channels: %s\n", active ? "ACTIVE" : "INACTIVE");
+#endif
+}
+
+
+
+
+// ============================================
+// HI-Z РЕЖИМ - ВХОД
+// ============================================
+
+void enter_hi_impedance_mode(void)
+{
+    // Полное отключение таймеров
+    __HAL_RCC_TIM1_CLK_DISABLE();
+    __HAL_RCC_TIM2_CLK_DISABLE();
+    __HAL_RCC_TIM3_CLK_DISABLE();
+    __HAL_RCC_TIM4_CLK_DISABLE();
+
+    // Полный сброс GPIO
+    GPIO_InitTypeDef GPIO_InitStruct = {0};
+    GPIO_InitStruct.Mode = GPIO_MODE_INPUT;
+    GPIO_InitStruct.Pull = GPIO_PULLDOWN;
+    GPIO_InitStruct.Speed = GPIO_SPEED_FREQ_LOW;
+
+    // PA8, PA15, PA6, PB6
+    GPIO_InitStruct.Pin = GPIO_PIN_8 | GPIO_PIN_15 | GPIO_PIN_6;
+    HAL_GPIO_Init(GPIOA, &GPIO_InitStruct);
+    
+    GPIO_InitStruct.Pin = GPIO_PIN_6;
+    HAL_GPIO_Init(GPIOB, &GPIO_InitStruct);
+
+    // Сброс альтернативных функций
+    GPIOA->AFR[0] &= ~((0xF << 24) | (0xF << 16)); // PA6, PA8
+    GPIOA->AFR[1] &= ~(0xF << 28);  // PA15
+
+    // Включение SSR
+    HAL_GPIO_WritePin(GPIOB, SOLID_RELAY_CONTROL_Pin, GPIO_PIN_SET);
+
+    // Обновление состояния
+    g_system_state.hi_impedance_active = 1;
+    system_switch_mode(MODE_HI_IMPEDANCE);
+
+#ifdef DEBUG_SYSTEM
+    my_printf("[HI-Z] Entering Hi-Z mode\n");
+#endif
+}
+
+
+// ============================================
+// HI-Z РЕЖИМ - ВЫХОД
+// ============================================
+
+void exit_hi_impedance_mode(void)
+{
+    // Выключение SSR
+    HAL_GPIO_WritePin(GPIOB, SOLID_RELAY_CONTROL_Pin, GPIO_PIN_RESET);
+
+    // Восстановление GPIO
+    GPIO_InitTypeDef GPIO_InitStruct = {0};
+    GPIO_InitStruct.Mode = GPIO_MODE_AF_PP;
+    GPIO_InitStruct.Pull = GPIO_NOPULL;
+    GPIO_InitStruct.Speed = GPIO_SPEED_FREQ_LOW;
+
+    // PA8 (TIM1_CH1)
+    GPIO_InitStruct.Pin = GPIO_PIN_8;
+    GPIO_InitStruct.Alternate = GPIO_AF2_TIM1;
+    HAL_GPIO_Init(GPIOA, &GPIO_InitStruct);
+
+    // PA15 (TIM2_CH1)
+    GPIO_InitStruct.Pin = GPIO_PIN_15;
+    GPIO_InitStruct.Alternate = GPIO_AF1_TIM2;
+    HAL_GPIO_Init(GPIOA, &GPIO_InitStruct);
+
+    // PA6 (TIM3_CH1)
+    GPIO_InitStruct.Pin = GPIO_PIN_6;
+    GPIO_InitStruct.Alternate = GPIO_AF2_TIM3;
+    HAL_GPIO_Init(GPIOA, &GPIO_InitStruct);
+
+    // PB6 (TIM4_CH1)
+    GPIO_InitStruct.Pin = GPIO_PIN_6;
+    GPIO_InitStruct.Alternate = GPIO_AF2_TIM4;
+    HAL_GPIO_Init(GPIOB, &GPIO_InitStruct);
+
+    // Восстановление состояния
+    g_system_state.hi_impedance_active = 0;
+
+#ifdef DEBUG_SYSTEM
+    my_printf("[HI-Z] Exiting Hi-Z mode\n");
 #endif
 }
