@@ -58,10 +58,7 @@ static void handle_hi_z_exit_if_needed(void)
  */
 static void update_channel_mask(uint8_t mask)
 {
-#ifdef DEBUG_CAN_COMMANDS
-    printf("[CAN] Updating channel mask: 0x%02X -> 0x%02X\n", 
-           g_system_state.channel_mask, mask);
-#endif
+    /* printf("[CAN] Updating channel mask: 0x%02X -> 0x%02X\n", g_system_state.channel_mask, mask); */
     
     g_system_state.channel_mask = mask;
     
@@ -71,6 +68,10 @@ static void update_channel_mask(uint8_t mask)
             set_channel_active(i, 0);
         }
     }
+
+    /* printf("[CAN] new channel mask: 0x%02X -> 0x%02X\n", g_system_state.channel_mask, mask); */
+    printf("seems like bug was in print!");
+
 }
 
 // ============================================
@@ -124,11 +125,9 @@ void process_can_command(uint8_t* data)
         // ===== CMD 0x01: RPM DYNAMIC MODE =====
         case CMD_SET_RPM_MODE: {
             uint8_t channel_mask = data[1];
-            
-#ifdef DEBUG_CAN_COMMANDS
+
             printf("[CAN] RPM_MODE, mask: 0x%02X\n", channel_mask);
-#endif
-            
+
             handle_hi_z_exit_if_needed();
             
             // Управление каналами
@@ -160,15 +159,11 @@ void process_can_command(uint8_t* data)
             
             float freq_hz = freq_mhz / 1000.0f;
             
-#ifdef DEBUG_CAN_COMMANDS
             printf("[CAN] FIXED_FREQ: %.3f Hz, mask: 0x%02X\n", freq_hz, channel_mask);
-#endif
             
             // Проверка диапазона
             if(freq_mhz < 1000 || freq_mhz > 4500000) {
-#ifdef DEBUG_CAN_ERROR
                 printf("[CAN ERROR] Frequency out of range: %lu mHz\n", freq_mhz);
-#endif
                 can_tx_error_code = 0x02;
                 can_tx_error_pending = 1;
                 break;
@@ -181,10 +176,7 @@ void process_can_command(uint8_t* data)
             
             if(channel_mask == 0x02) {
                 // ONLY_FR режим
-#ifdef DEBUG_CAN_COMMANDS
                 printf("[CAN] ONLY_FR mode (32-bit TIM2)\n");
-#endif
-                
                 uint16_t psc;
                 uint32_t arr_32bit;
                 calculate_optimal_psc_arr_32bit(freq_hz, &psc, &arr_32bit);
@@ -216,29 +208,84 @@ void process_can_command(uint8_t* data)
                 update_channel_mask(0x02);
             }
             else if(channel_mask == 0x0F) {
-                // ALL_FOUR режим
-#ifdef DEBUG_CAN_COMMANDS
                 printf("[CAN] ALL_FOUR mode (16-bit all timers)\n");
-#endif
                 
                 uint16_t psc, arr_16bit;
                 calculate_optimal_psc_arr_16bit(freq_hz, &psc, &arr_16bit);
+                printf("calculated\n");
                 
                 set_all_channels_active(1);
+                printf("all set\n");
                 update_channel_mask(0x0F);
+                printf("updated\n");
                 
-                // Настраиваем все таймеры
-                TIM_TypeDef* timers[4] = {TIM1, TIM2, TIM3, TIM4};
-                for(int i = 0; i < 4; i++) {
-                    timers[i]->CR1 &= ~TIM_CR1_CEN;
-                    timers[i]->PSC = psc;
-                    timers[i]->ARR = arr_16bit;
-                    timers[i]->CNT = 0;
-                    timers[i]->CR1 |= TIM_CR1_CEN;
-                    
-                    g_system_state.psc_values[i] = psc;
-                    g_system_state.arr_values[i] = arr_16bit;
+                // Настраиваем TIM1, TIM3, TIM4 - 16-битные
+                TIM_TypeDef* timers_16bit[3] = {TIM1, TIM3, TIM4};
+                
+                for(int i = 0; i < 3; i++) {
+                    timers_16bit[i]->CR1 &= ~TIM_CR1_CEN;
+                    timers_16bit[i]->PSC = psc;
+                    timers_16bit[i]->ARR = arr_16bit;
+                    timers_16bit[i]->CNT = 0;
+                    timers_16bit[i]->CR1 |= TIM_CR1_CEN;
                 }
+
+                // TIM2 отдельно - 32-битный (ТОЛЬКО ОДНА НАСТРОЙКА!)
+                printf("[FIXED_FREQ] Configuring TIM2 (32-bit)...\n");
+
+                TIM2->DIER &= ~TIM_DIER_UIE;  // Отключить Update Interrupt, иначе виснет
+
+                uint16_t psc_32bit;
+                uint32_t arr_32bit;
+                calculate_optimal_psc_arr_32bit(freq_hz, &psc_32bit, &arr_32bit);
+                printf("[FIXED_FREQ] TIM2 params: PSC=%lu, ARR=%lu\n", (uint32_t)psc_32bit, arr_32bit);
+
+                printf("[TIM2 DIAG] Before config:\n");
+                printf("  CR1: 0x%04lX, CEN=%d\n", (uint32_t)TIM2->CR1, (TIM2->CR1 & TIM_CR1_CEN) ? 1 : 0);
+                printf("  PSC: %lu\n", (uint32_t)TIM2->PSC);
+                printf("  ARR: %lu\n", TIM2->ARR);
+                printf("  CCR1: %lu\n", TIM2->CCR1);
+                printf("  CCER: 0x%04lX\n", (uint32_t)TIM2->CCER);
+                printf("  DIER: 0x%04lX\n", (uint32_t)TIM2->DIER);
+
+                printf("[FIXED_FREQ] Stopping TIM2...\n");
+                TIM2->CR1 &= ~TIM_CR1_CEN;
+                printf("[FIXED_FREQ] TIM2 stopped\n");
+
+                printf("[FIXED_FREQ] Setting TIM2->PSC = %lu\n", (uint32_t)psc_32bit);
+                TIM2->PSC = psc_32bit;
+                printf("[FIXED_FREQ] TIM2->PSC set\n");
+
+                printf("[FIXED_FREQ] Setting TIM2->ARR = %lu\n", arr_32bit);
+                TIM2->ARR = arr_32bit;
+                printf("[FIXED_FREQ] TIM2->ARR set\n");
+
+                printf("[FIXED_FREQ] Resetting TIM2->CNT\n");
+                TIM2->CNT = 0;
+
+                printf("[FIXED_FREQ] Setting TIM2 PWM duty: CCR1 = %lu\n", arr_32bit / 2);
+                TIM2->CCR1 = arr_32bit / 2;
+
+                printf("[FIXED_FREQ] Enabling TIM2 PWM output (CCER)\n");
+                TIM2->CCER |= TIM_CCER_CC1E;
+
+                printf("[FIXED_FREQ] Starting TIM2...\n");
+                TIM2->CR1 |= TIM_CR1_CEN;
+                printf("[FIXED_FREQ] TIM2 started\n");
+                
+                // Сохраняем параметры
+                g_system_state.psc_values[1] = psc_32bit;
+                g_system_state.arr_values_32bit[1] = arr_32bit;
+
+                // Диагностика после запуска
+                printf("[TIM2 DIAG] After config:\n");
+                printf("  CR1: 0x%04lX, CEN=%d\n", (uint32_t)TIM2->CR1, (TIM2->CR1 & TIM_CR1_CEN) ? 1 : 0);
+                printf("  PSC: %lu\n", (uint32_t)TIM2->PSC);
+                printf("  ARR: %lu\n", TIM2->ARR);
+                printf("  CCR1: %lu\n", TIM2->CCR1);
+                printf("  CCER: 0x%04lX\n", (uint32_t)TIM2->CCER);
+                
+                printf("done\n");
             }
             else {
 #ifdef DEBUG_CAN_ERROR

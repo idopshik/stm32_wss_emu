@@ -271,6 +271,7 @@ void system_print_status(void)
 
 void set_channel_active(uint8_t channel_num, uint8_t active)
 {
+    printf("set_chan_active_called");
     if(channel_num >= 4) return;
     
     if(active) {
