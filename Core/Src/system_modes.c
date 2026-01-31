@@ -171,6 +171,19 @@ void system_switch_mode(operation_mode_t new_mode)
     switch(new_mode) {
         case MODE_RPM_DYNAMIC:
             g_system_state.rpm_mode_active = 0;  // Флаг будет установлен при первом сообщении
+            
+            TIM1->CR1 |= TIM_CR1_CEN;      // Включить таймер
+            TIM1->DIER |= TIM_DIER_UIE;    // Включить прерывания
+            TIM1->EGR = TIM_EGR_UG;        // Обнулить счетчик
+
+            TIM3->CR1 |= TIM_CR1_CEN;      // Включить таймер
+            TIM3->DIER |= TIM_DIER_UIE;    // Включить прерывания
+            TIM3->EGR = TIM_EGR_UG;        // Обнулить счетчик
+
+            TIM4->CR1 |= TIM_CR1_CEN;      // Включить таймер
+            TIM4->DIER |= TIM_DIER_UIE;    // Включить прерывания
+            TIM4->EGR = TIM_EGR_UG;        // Обнулить счетчик
+            
             break;
             
         case MODE_DISABLED:

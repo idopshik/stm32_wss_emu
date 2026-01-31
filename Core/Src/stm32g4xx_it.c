@@ -311,7 +311,7 @@ void TIM8_CC_IRQHandler(void)
   /* USER CODE BEGIN TIM8_CC_IRQn 0 */
     
   /* USER CODE END TIM8_CC_IRQn 0 */
-
+  HAL_TIM_IRQHandler(&htim8);
   /* USER CODE BEGIN TIM8_CC_IRQn 1 */
     
   /* USER CODE END TIM8_CC_IRQn 1 */

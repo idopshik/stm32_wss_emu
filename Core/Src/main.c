@@ -68,6 +68,20 @@ typedef struct {
 } whl_chnl;
 
 whl_chnl *whl_arr[4];
+
+
+volatile uint32_t tim4_irq_counter = 0;
+// Структура для диагностики
+typedef struct {
+    uint32_t last_cnt;
+    uint32_t stuck_count;
+    uint32_t last_irq_time;
+    uint8_t is_running;
+} TimerDebug_t;
+TimerDebug_t tim4_debug = {0};
+
+
+
 /* USER CODE END PTD */
 
 /* Private define ------------------------------------------------------------*/
@@ -102,8 +116,6 @@ uint8_t update_led_flag = 0;
 /* USER CODE END PV */
 
 /* Private function prototypes -----------------------------------------------*/
-static void led_blink_pattern(uint32_t current_time, uint32_t interval_ms);
-
 void SystemClock_Config(void);
 static void MX_GPIO_Init(void);
 static void MX_FDCAN1_Init(void);
@@ -114,7 +126,6 @@ static void MX_TIM4_Init(void);
 static void MX_TIM6_Init(void);
 static void MX_TIM8_Init(void);
 static void MX_USART1_UART_Init(void);
-
 /* USER CODE BEGIN PFP */
 static void CANFD1_Set_Filtes(void);
 void my_printf(const char *fmt, ...);
@@ -150,12 +161,10 @@ void vprint(const char *fmt, va_list argp)
 
 void my_printf(const char *fmt, ...)
 {
-#ifdef DEBUG
     va_list argp;
     va_start(argp, fmt);
     vprint(fmt, argp);
     va_end(argp);
-#endif
 }
 
 uint32_t calculete_period_only(int val)
@@ -386,7 +395,14 @@ void HAL_TIM_PeriodElapsedCallback(TIM_HandleTypeDef *htim)
         HAL_GPIO_TogglePin(GPIOA, tim3_out_Pin);
     }
     else if (htim->Instance == TIM4) {
-        HAL_GPIO_TogglePin(GPIOB, tim4_out_Pin);
+        
+        tim4_irq_counter++;  // Теперь переменная объявлена
+        HAL_GPIO_TogglePin(GPIOB, GPIO_PIN_9);
+        
+        // Логируем каждое 10-е прерывание
+        if (tim4_irq_counter % 10 == 0) {
+            printf("[IRQ TIM4] #%lu\n", tim4_irq_counter);
+        }
     }
 }
 
@@ -421,6 +437,141 @@ void test_rpm_calculation(void)
 #endif
 }
 
+
+void diagnostic_tim4_status(void) {
+    static uint32_t last_debug2 = 0;
+    
+    if (HAL_GetTick() - last_debug2 > 3000) {
+        last_debug2 = HAL_GetTick();
+        
+        my_printf("\n=== TIM4 DIAG [Mode: %s] ===\n", 
+                  get_mode_name(g_system_state.current_mode));
+        
+        // 1. Clock enable
+        my_printf("RCC->APB1ENR1: 0x%08lX ", RCC->APB1ENR1);
+        my_printf("TIM4_EN=%lu\n", (RCC->APB1ENR1 & RCC_APB1ENR1_TIM4EN) ? 1 : 0);
+        
+        // 2. Control register
+        my_printf("CR1: 0x%04lX ", TIM4->CR1);
+        my_printf("CEN=%lu URS=%lu DIR=%lu\n",
+               (TIM4->CR1 & TIM_CR1_CEN) ? 1 : 0,
+               (TIM4->CR1 & TIM_CR1_URS) ? 1 : 0,
+               (TIM4->CR1 & TIM_CR1_DIR) ? 1 : 0);
+        
+        // 3. Parameters
+        my_printf("PSC: %lu ARR: %lu CNT: %lu\n", 
+                  TIM4->PSC, TIM4->ARR, TIM4->CNT);
+        
+        // 4. Status
+        my_printf("SR: 0x%04lX UIF=%lu\n", TIM4->SR, (TIM4->SR & 1));
+        
+        // 5. Interrupts
+        my_printf("DIER: 0x%04lX UIE=%lu\n", TIM4->DIER, (TIM4->DIER & 1));
+        my_printf("IRQ count: %lu\n", tim4_irq_counter);
+
+        // Полная диагностика GPIO
+        uint32_t moder = GPIOB->MODER;
+        uint32_t otyper = GPIOB->OTYPER;
+        uint32_t pupdr = GPIOB->PUPDR;
+        
+        my_printf("MODER[PB9]: %lu (0=Input, 1=Output, 2=Alt, 3=Analog)\n", 
+                  (moder >> 18) & 0x03);
+        my_printf("OTYPER[PB9]: %lu (0=Push-pull, 1=Open-drain)\n", 
+                  (otyper >> 9) & 0x01);
+        my_printf("PUPDR[PB9]: %lu (0=No pull, 1=Pull-up, 2=Pull-down)\n", 
+                  (pupdr >> 18) & 0x03);
+        }
+}
+
+void diagnostic_tim2_status(void) {
+    static uint32_t last_debug2 = 0;
+    
+    if (HAL_GetTick() - last_debug2 > 3000) {
+        last_debug2 = HAL_GetTick();
+        
+        my_printf("\n=== TIM2 DIAG [Mode: %s] ===\n", 
+                  get_mode_name(g_system_state.current_mode));
+        
+        // 1. Clock enable
+        my_printf("RCC->APB1ENR1: 0x%08lX ", RCC->APB1ENR1);
+        my_printf("TIM2_EN=%lu\n", (RCC->APB1ENR1 & RCC_APB1ENR1_TIM2EN) ? 1 : 0);
+        
+        // 2. Control register
+        my_printf("CR1: 0x%04lX ", TIM2->CR1);
+        my_printf("CEN=%lu URS=%lu DIR=%lu\n",
+               (TIM2->CR1 & TIM_CR1_CEN) ? 1 : 0,
+               (TIM2->CR1 & TIM_CR1_URS) ? 1 : 0,
+               (TIM2->CR1 & TIM_CR1_DIR) ? 1 : 0);
+        
+        // 3. Parameters
+        my_printf("PSC: %lu ARR: %lu CNT: %lu\n", 
+                  TIM2->PSC, TIM2->ARR, TIM2->CNT);
+        
+        // 4. Status
+        my_printf("SR: 0x%04lX UIF=%lu\n", TIM2->SR, (TIM2->SR & 1));
+        
+        // 5. Interrupts
+        my_printf("DIER: 0x%04lX UIE=%lu\n", TIM2->DIER, (TIM2->DIER & 1));
+    }
+}
+
+
+void diagnostic_mode_status(void) {
+    static uint32_t last_mode_debug = 0;
+    uint32_t current_time = HAL_GetTick();
+
+    if(current_time - last_mode_debug > 3000) {
+        last_mode_debug = current_time;
+        
+        my_printf("\n=== CURRENT MODE STATUS ===\n");
+        my_printf("Mode: %s\n", get_mode_name(g_system_state.current_mode));
+        my_printf("Channel Mask: 0x%02X\n", g_system_state.channel_mask);
+        my_printf("Hi-Z Active: %s\n", 
+                  g_system_state.hi_impedance_active ? "YES" : "NO");
+        my_printf("Last CAN Command: %lu ms ago\n", 
+                  current_time - g_system_state.last_can_command_time);
+        my_printf("Uptime: %lu seconds\n", system_get_uptime_seconds());
+        my_printf("=======================\n");
+    }
+}
+
+
+void diagnostic_gpio_status(void) {
+    static uint32_t last_gpio_debug = 0;
+    uint32_t current_time = HAL_GetTick();
+
+    if(current_time - last_gpio_debug > 3000) {
+        last_gpio_debug = current_time;
+        
+        my_printf("\n=== GPIO STATUS ===\n");
+        
+        // PA8 (FL)
+        my_printf("PA8: MODER=%lu, IDR=%lu\n", 
+                  (GPIOA->MODER >> 16) & 0x03, 
+                  (GPIOA->IDR >> 8) & 0x01);
+        
+        // PA15 (FR)
+        my_printf("PA15: MODER=%lu, IDR=%lu\n", 
+                  (GPIOA->MODER >> 30) & 0x03, 
+                  (GPIOA->IDR >> 15) & 0x01);
+        
+        // PA6 (RL)
+        my_printf("PA6: MODER=%lu, IDR=%lu\n", 
+                  (GPIOA->MODER >> 12) & 0x03, 
+                  (GPIOA->IDR >> 6) & 0x01);
+        
+        // PB6 (RR)
+        my_printf("PB6: MODER=%lu, IDR=%lu\n", 
+                  (GPIOB->MODER >> 12) & 0x03, 
+                  (GPIOB->IDR >> 6) & 0x01);
+        
+        // PB9
+        my_printf("PB9: MODER=%lu, IDR=%lu\n", 
+                  (GPIOB->MODER >> 18) & 0x03, 
+                  (GPIOB->IDR >> 9) & 0x01);
+    }
+}
+
 /* USER CODE END 0 */
 
 /**
@@ -429,6 +580,7 @@ void test_rpm_calculation(void)
   */
 int main(void)
 {
+
   /* USER CODE BEGIN 1 */
 
   /* USER CODE END 1 */
@@ -465,6 +617,8 @@ int main(void)
 
   HAL_Delay(1500);
   enter_hi_impedance_mode();
+  diagnostic_mode_status();
+
 
   CANFD1_Set_Filtes();
 
@@ -496,6 +650,11 @@ int main(void)
   HAL_NVIC_SetPriority(TIM3_IRQn, 10, 0);
   HAL_NVIC_SetPriority(TIM4_IRQn, 10, 0);
   HAL_NVIC_SetPriority(USART1_IRQn, 10, 0);
+
+
+  printf("\n\n=== SWV TEST ===\n");
+  printf("Если видишь это - SWV работает!\n");
+  printf("TIM4->CR1 = 0x%04lX\n", TIM4->CR1);
 
 #ifdef DEBUG
   my_printf("\n========================================\n");
@@ -536,7 +695,7 @@ int main(void)
   my_printf("System ready - waiting for CAN data...\n");
 #endif
 
-  // Инициализация структур для колес
+  // ??нициализация структур для колес
   whl_chnl fl_whl_s = {numFL, &htim1, 0, 24, 0, 0, 0, 0, 0, 0};
   whl_chnl fr_whl_s = {numFR, &htim2, 0, 12, 0, 0, 0, 0, 0, 0};
   whl_chnl rl_whl_s = {numRL, &htim3, 0, 24, 0, 0, 0, 0, 0, 0};
@@ -561,8 +720,20 @@ int main(void)
   test_rpm_calculation();
 #endif
 
+
+
+
+
+
+
   /* USER CODE BEGIN WHILE */
   while (1) {
+
+
+    diagnostic_tim4_status();
+    diagnostic_mode_status();
+    diagnostic_gpio_status();
+
 #ifdef DEBUG
     static uint32_t last_debug = 0;
     if(HAL_GetTick() - last_debug > 500) {
@@ -672,6 +843,7 @@ void SystemClock_Config(void)
   */
 static void MX_FDCAN1_Init(void)
 {
+
   /* USER CODE BEGIN FDCAN1_Init 0 */
 
   /* USER CODE END FDCAN1_Init 0 */
@@ -704,6 +876,7 @@ static void MX_FDCAN1_Init(void)
   /* USER CODE BEGIN FDCAN1_Init 2 */
 
   /* USER CODE END FDCAN1_Init 2 */
+
 }
 
 /**
@@ -713,6 +886,7 @@ static void MX_FDCAN1_Init(void)
   */
 static void MX_TIM1_Init(void)
 {
+
   /* USER CODE BEGIN TIM1_Init 0 */
 
   /* USER CODE END TIM1_Init 0 */
@@ -749,6 +923,7 @@ static void MX_TIM1_Init(void)
   /* USER CODE BEGIN TIM1_Init 2 */
 
   /* USER CODE END TIM1_Init 2 */
+
 }
 
 /**
@@ -758,6 +933,7 @@ static void MX_TIM1_Init(void)
   */
 static void MX_TIM2_Init(void)
 {
+
   /* USER CODE BEGIN TIM2_Init 0 */
 
   /* USER CODE END TIM2_Init 0 */
@@ -806,6 +982,7 @@ static void MX_TIM2_Init(void)
 
   /* USER CODE END TIM2_Init 2 */
   HAL_TIM_MspPostInit(&htim2);
+
 }
 
 /**
@@ -815,6 +992,7 @@ static void MX_TIM2_Init(void)
   */
 static void MX_TIM3_Init(void)
 {
+
   /* USER CODE BEGIN TIM3_Init 0 */
 
   /* USER CODE END TIM3_Init 0 */
@@ -849,6 +1027,7 @@ static void MX_TIM3_Init(void)
   /* USER CODE BEGIN TIM3_Init 2 */
 
   /* USER CODE END TIM3_Init 2 */
+
 }
 
 /**
@@ -858,6 +1037,7 @@ static void MX_TIM3_Init(void)
   */
 static void MX_TIM4_Init(void)
 {
+
   /* USER CODE BEGIN TIM4_Init 0 */
 
   /* USER CODE END TIM4_Init 0 */
@@ -892,6 +1072,7 @@ static void MX_TIM4_Init(void)
   /* USER CODE BEGIN TIM4_Init 2 */
 
   /* USER CODE END TIM4_Init 2 */
+
 }
 
 /**
@@ -901,6 +1082,7 @@ static void MX_TIM4_Init(void)
   */
 static void MX_TIM6_Init(void)
 {
+
   /* USER CODE BEGIN TIM6_Init 0 */
 
   /* USER CODE END TIM6_Init 0 */
@@ -928,6 +1110,7 @@ static void MX_TIM6_Init(void)
   /* USER CODE BEGIN TIM6_Init 2 */
 
   /* USER CODE END TIM6_Init 2 */
+
 }
 
 /**
@@ -937,6 +1120,7 @@ static void MX_TIM6_Init(void)
   */
 static void MX_TIM8_Init(void)
 {
+
   /* USER CODE BEGIN TIM8_Init 0 */
 
   /* USER CODE END TIM8_Init 0 */
@@ -973,6 +1157,7 @@ static void MX_TIM8_Init(void)
   /* USER CODE BEGIN TIM8_Init 2 */
 
   /* USER CODE END TIM8_Init 2 */
+
 }
 
 /**
@@ -982,6 +1167,7 @@ static void MX_TIM8_Init(void)
   */
 static void MX_USART1_UART_Init(void)
 {
+
   /* USER CODE BEGIN USART1_Init 0 */
 
   /* USER CODE END USART1_Init 0 */
@@ -1019,6 +1205,7 @@ static void MX_USART1_UART_Init(void)
   /* USER CODE BEGIN USART1_Init 2 */
 
   /* USER CODE END USART1_Init 2 */
+
 }
 
 /**
@@ -1042,7 +1229,7 @@ static void MX_GPIO_Init(void)
   HAL_GPIO_WritePin(GPIOA, EXT_LED_Pin|tim3_out_Pin|tim1_out_Pin, GPIO_PIN_RESET);
 
   /*Configure GPIO pin Output Level */
-  HAL_GPIO_WritePin(SOLID_RELAY_CONTROL_GPIO_Port, SOLID_RELAY_CONTROL_Pin, GPIO_PIN_RESET);
+  HAL_GPIO_WritePin(SOLID_RELAY_CONTROL_GPIO_Port, SOLID_RELAY_CONTROL_Pin, GPIO_PIN_SET);
 
   /*Configure GPIO pin Output Level */
   HAL_GPIO_WritePin(LED_Blue_GPIO_Port, LED_Blue_Pin, GPIO_PIN_RESET);

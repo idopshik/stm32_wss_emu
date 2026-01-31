@@ -219,18 +219,14 @@ void process_can_command(uint8_t* data)
 
 void enter_hi_impedance_mode(void)
 {
-#ifdef DEBUG_CAN_COMMANDS
     my_printf("\n[HI-Z] ===== ENTERING HI-IMPEDANCE MODE =====\n");
-#endif
     
     // === 1. ОСТАНАВЛИВАЕМ ВСЕ ТАЙМЕРЫ ===
     TIM1->CR1 &= ~TIM_CR1_CEN;
     TIM2->CR1 &= ~TIM_CR1_CEN;
     TIM3->CR1 &= ~TIM_CR1_CEN;
     TIM4->CR1 &= ~TIM_CR1_CEN;
-#ifdef DEBUG_CAN_COMMANDS
     my_printf("[HI-Z] All timers stopped\n");
-#endif
     
     // === 2. ПЕРЕВОДИМ GPIO В INPUT (Hi-Z) ===
     GPIO_InitTypeDef GPIO_InitStruct = {0};
@@ -238,49 +234,47 @@ void enter_hi_impedance_mode(void)
     GPIO_InitStruct.Pull = GPIO_NOPULL;
     GPIO_InitStruct.Speed = GPIO_SPEED_FREQ_LOW;
     
+    // Явно сбрасываем альтернативные функции
     // PA8 (TIM1_CH1) - FL
     GPIO_InitStruct.Pin = GPIO_PIN_8;
     HAL_GPIO_Init(GPIOA, &GPIO_InitStruct);
-#ifdef DEBUG_CAN_COMMANDS
+    GPIOA->MODER = (GPIOA->MODER & ~(3UL << 16)) | (0UL << 16);  // Input mode
     my_printf("[HI-Z] PA8 (FL) → INPUT\n");
-#endif
     
     // PA15 (TIM2_CH1) - FR
     GPIO_InitStruct.Pin = GPIO_PIN_15;
     HAL_GPIO_Init(GPIOA, &GPIO_InitStruct);
-#ifdef DEBUG_CAN_COMMANDS
+    GPIOA->MODER = (GPIOA->MODER & ~(3UL << 30)) | (0UL << 30);  // Input mode
     my_printf("[HI-Z] PA15 (FR) → INPUT\n");
-#endif
     
     // PA6 (TIM3_CH1) - RL
     GPIO_InitStruct.Pin = GPIO_PIN_6;
     HAL_GPIO_Init(GPIOA, &GPIO_InitStruct);
-#ifdef DEBUG_CAN_COMMANDS
+    GPIOA->MODER = (GPIOA->MODER & ~(3UL << 12)) | (0UL << 12);  // Input mode
     my_printf("[HI-Z] PA6 (RL) → INPUT\n");
-#endif
     
     // PB6 (TIM4_CH1) - RR
     GPIO_InitStruct.Pin = GPIO_PIN_6;
     HAL_GPIO_Init(GPIOB, &GPIO_InitStruct);
-#ifdef DEBUG_CAN_COMMANDS
+    GPIOB->MODER = (GPIOB->MODER & ~(3UL << 12)) | (0UL << 12);  // Input mode
     my_printf("[HI-Z] PB6 (RR) → INPUT\n");
-#endif
+
+    // PB9 - дополнительно
+    GPIO_InitStruct.Pin = GPIO_PIN_9;
+    HAL_GPIO_Init(GPIOB, &GPIO_InitStruct);
+    GPIOB->MODER = (GPIOB->MODER & ~(3UL << 18)) | (0UL << 18);  // Input mode
+    my_printf("[HI-Z] PB9 → INPUT\n");
     
     // === 3. ВКЛЮЧАЕМ SOLID STATE RELAY (PB10) ===
     HAL_GPIO_WritePin(GPIOB, SOLID_RELAY_CONTROL_Pin, GPIO_PIN_SET);
-#ifdef DEBUG_CAN_COMMANDS
     my_printf("[HI-Z] SSR Control (PB10) → HIGH (external signal active)\n");
-#endif
     
     // === 4. УСТАНАВЛИВАЕМ ФЛАГИ И РЕЖИМ ===
     g_system_state.hi_impedance_active = 1;
     system_switch_mode(MODE_HI_IMPEDANCE);
     
-#ifdef DEBUG_CAN_COMMANDS
     my_printf("[HI-Z] ✓ HI-IMPEDANCE active - safe for external signals\n");
-    my_printf("[HI-Z] ✓ PA15 (FR) controlled by external generator via SSR\n");
     my_printf("[HI-Z] ======================================\n\n");
-#endif
 }
 
 // ============================================
