@@ -171,27 +171,21 @@ uint32_t calculete_period_only(int val)
 {
     if (val <= 0) {
         val = 1;
-#ifdef DEBUG
-        my_printf("[CALC_PERIOD_TIM2] WARNING: Zero or negative input, using 1\n");
-#endif
+        /* printf("[CALC_PERIOD_TIM2] WARNING: Zero or negative input, using 1\n"); */
     }
 
     if (val > 65535) {
         val = 65535;
-#ifdef DEBUG
-        my_printf("[CALC_PERIOD_TIM2] WARNING: Input too large, clamped to 65535\n");
-#endif
+        /* printf("[CALC_PERIOD_TIM2] WARNING: Input too large, clamped to 65535\n"); */
     }
 
     uint64_t total_divider = TOTAL_DIVIDER_CONST / val;
     uint32_t arr = (uint32_t)(total_divider / 13) - 1;
 
-#ifdef DEBUG
-    my_printf("[CALC_PERIOD_TIM2] Input RPM: %d\n", val);
-    my_printf("[CALC_PERIOD_TIM2] Total Divider: %lu\n", (uint32_t)total_divider);
-    my_printf("[CALC_PERIOD_TIM2] PSC: 12\n");
-    my_printf("[CALC_PERIOD_TIM2] ARR: %lu\n", arr);
-#endif
+    /* printf("[CALC_PERIOD_TIM2] Input RPM: %d\n", val); */
+    /* printf("[CALC_PERIOD_TIM2] Total Divider: %lu\n", (uint32_t)total_divider); */
+    /* printf("[CALC_PERIOD_TIM2] PSC: 12\n"); */
+    /* printf("[CALC_PERIOD_TIM2] ARR: %lu\n", arr); */
 
     return arr;
 }
@@ -259,24 +253,55 @@ int calculete_prsc_and_perio(int val, int *arr, whl_chnl *whl_arr[], int wheelnu
 
 void update_wheel_seamless(TIM_TypeDef* TIMx, int rpm, whl_chnl* wheel)
 {
+
+    // ЭКСТРЕННАЯ ПРОВЕРКА ТАКТИРОВАНИЯ
+    if ((uint32_t)TIMx == TIM2_BASE) {
+        if (!(RCC->APB1ENR1 & RCC_APB1ENR1_TIM2EN)) {
+            my_printf("[SEAMLESS_EMERGENCY] TIM2 clock disabled! Forcing enable!\n");
+            __HAL_RCC_TIM2_CLK_ENABLE();
+            // Минимальная задержка
+            volatile int i; for(i=0; i<10; i++);
+        }
+    }
+
 #ifdef DEBUG
-    my_printf("[SEAMLESS] Timer: TIM%d, RPM: %d\n", 
-              wheel->wheel_num + 1, rpm);
+    my_printf("\n[SEAMLESS_START] TIM%d, RPM: %d, CEN_before: %lu\n", 
+              wheel->wheel_num + 1, rpm, 
+              (TIMx->CR1 & TIM_CR1_CEN) ? 1 : 0);
 #endif
 
+    // Если RPM < 63 - ВЫКЛЮЧАЕМ таймер и выходим
     if (rpm < 0x3F) {
-        TIMx->CR1 &= ~TIM_CR1_CEN;
+#ifdef DEBUG
+        my_printf("[SEAMLESS] Stopping TIM%d (RPM=%d < 63)\n", 
+                  wheel->wheel_num + 1, rpm);
+#endif
+        
+        uint32_t cr1_before = TIMx->CR1;
+        TIMx->CR1 &= ~TIM_CR1_CEN;  // Выключаем таймер
+        uint32_t cr1_after = TIMx->CR1;
+        
+#ifdef DEBUG
+        my_printf("[SEAMLESS] TIM%d CEN: %lu -> %lu (CR1: 0x%04lX -> 0x%04lX)\n",
+                  wheel->wheel_num + 1,
+                  (cr1_before & TIM_CR1_CEN) ? 1 : 0,
+                  (cr1_after & TIM_CR1_CEN) ? 1 : 0,
+                  cr1_before, cr1_after);
+#endif
+        
         wheel->pending_update = 0;
         __HAL_TIM_DISABLE_IT(wheel->htim, TIM_IT_UPDATE);
 
         uint8_t channel_bit = 1 << wheel->wheel_num;
         g_system_state.channel_mask &= ~channel_bit;
         return;
-    } else {
-        uint8_t channel_bit = 1 << wheel->wheel_num;
-        g_system_state.channel_mask |= channel_bit;
     }
     
+    // Включаем канал в маске
+    uint8_t channel_bit = 1 << wheel->wheel_num;
+    g_system_state.channel_mask |= channel_bit;
+    
+    // Расчет параметров
     int calc[4];
     calculete_prsc_and_perio(rpm, calc, whl_arr, wheel->wheel_num);
     
@@ -285,68 +310,195 @@ void update_wheel_seamless(TIM_TypeDef* TIMx, int rpm, whl_chnl* wheel)
     
     wheel->prev_arr = TIMx->ARR;
     
+#ifdef DEBUG
+    my_printf("[SEAMLESS_CALC] TIM%d: prev_psc=%d, new_psc=%d, new_arr=%d\n",
+              wheel->wheel_num + 1, wheel->prev_psc, new_psc, new_arr);
+#endif
+    
+    // Если PSC не меняется - просто обновляем ARR
     if (new_psc == wheel->prev_psc) {
-        TIMx->CR1 |= TIM_CR1_ARPE;
+#ifdef DEBUG
+        my_printf("[SEAMLESS] Direct update (PSC unchanged)\n");
+#endif
+        
+        // Отключаем ARPE для прямой записи
+        uint32_t cr1_temp = TIMx->CR1;
+        TIMx->CR1 &= ~TIM_CR1_ARPE;
+        
+        // Записываем ARR напрямую
         TIMx->ARR = new_arr;
+        
+        // Включаем ARPE обратно
+        TIMx->CR1 = cr1_temp | TIM_CR1_ARPE;
+        
+        // Принудительный update для загрузки ARR
+        TIMx->EGR |= TIM_EGR_UG;
+        
         wheel->prev_psc = new_psc;
         wheel->prev_speed = rpm;
         wheel->pending_update = 0;
         __HAL_TIM_DISABLE_IT(wheel->htim, TIM_IT_UPDATE);
         
-        if (!(TIMx->CR1 & TIM_CR1_CEN)) {
-            TIMx->CR1 |= TIM_CR1_CEN;
-        }
+        // ГАРАНТИРОВАННО включаем таймер
+        cr1_temp = TIMx->CR1;
+        TIMx->CR1 |= TIM_CR1_CEN;
+        
+#ifdef DEBUG
+        my_printf("[SEAMLESS] TIM%d updated: PSC=%d, ARR=%d, CEN: %lu -> %lu\n",
+                  wheel->wheel_num + 1, new_psc, new_arr,
+                  (cr1_temp & TIM_CR1_CEN) ? 1 : 0,
+                  (TIMx->CR1 & TIM_CR1_CEN) ? 1 : 0);
+        my_printf("[SEAMLESS] TIM%d CR1=0x%04lX, ARR=%lu, PSC=%lu\n",
+                  wheel->wheel_num + 1, TIMx->CR1, TIMx->ARR, TIMx->PSC);
+#endif
         return;
     }
+    
+    // Если нужно менять PSC - ставим флаг ожидания
+#ifdef DEBUG
+    my_printf("[SEAMLESS] PSC change needed: %d -> %d\n", 
+              wheel->prev_psc, new_psc);
+#endif
     
     wheel->target_psc = new_psc;
     wheel->target_arr = new_arr;
     wheel->pending_update = 1;
     
+    // Включаем прерывание для seamless переключения
     __HAL_TIM_ENABLE_IT(wheel->htim, TIM_IT_UPDATE);
     
-    if (!(TIMx->CR1 & TIM_CR1_CEN)) {
-        TIMx->CR1 |= TIM_CR1_CEN;
-    }
+    // ГАРАНТИРОВАННО включаем таймер (если RPM >= 63)
+    uint32_t cr1_before = TIMx->CR1;
+    TIMx->CR1 |= TIM_CR1_CEN;
+    uint32_t cr1_after = TIMx->CR1;
     
 #ifdef DEBUG
-    printf("PSC change pending: %d->%d, ARR: %lu->%d\n", 
-           wheel->prev_psc, new_psc, wheel->prev_arr, new_arr);
+    my_printf("[SEAMLESS] TIM%d PSC change pending\n", wheel->wheel_num + 1);
+    my_printf("[SEAMLESS] TIM%d CEN forced: %lu -> %lu (CR1: 0x%04lX -> 0x%04lX)\n",
+              wheel->wheel_num + 1,
+              (cr1_before & TIM_CR1_CEN) ? 1 : 0,
+              (cr1_after & TIM_CR1_CEN) ? 1 : 0,
+              cr1_before, cr1_after);
+    my_printf("[SEAMLESS_END] TIM%d CEN_now: %lu\n",
+              wheel->wheel_num + 1,
+              (TIMx->CR1 & TIM_CR1_CEN) ? 1 : 0);
 #endif
 }
 
-void set_new_speeds(int vFLrpm, int vFRrpm, int vRLrpm, int vRRrpm, whl_chnl *whl_arr[]) {
-#ifdef DEBUG
-    my_printf("[SET_SPEEDS] FL: %d, FR: %d, RL: %d, RR: %d\n", 
-               vFLrpm, vFRrpm, vRLrpm, vRRrpm);
-#endif
+void set_new_speeds(int vFLrpm, int vFRrpm, int vRLrpm, int vRRrpm, whl_chnl *whl_arr[]) 
+{
+    // Только краткая информация через SWV
+    printf("[SET] %d %d %d %d\n", vFLrpm, vFRrpm, vRLrpm, vRRrpm);
+    printf("[DBG] FL: new=%d prev=%d\n", vFLrpm, whl_arr[numFL]->prev_speed);
 
+    // FL wheel (TIM1)
     if (vFLrpm != whl_arr[numFL]->prev_speed) {
         update_wheel_seamless(TIM1, vFLrpm, whl_arr[numFL]);
     }
     
-    if (vFRrpm != whl_arr[numFR]->prev_speed) {
+    // FR wheel (TIM2) - ОСОБАЯ ОБРАБОТКА
+    if (vFRrpm != whl_arr[numFR]->prev_speed) 
+    {
+        printf("[TIM2] RPM change: %d -> %d\n", whl_arr[numFR]->prev_speed, vFRrpm);
+        
         if (vFRrpm < 0x3F) {
+            // Остановка таймера
+            printf("[TIM2] Stopping (RPM=%d < 63)\n", vFRrpm);
+            uint32_t cr1_before = TIM2->CR1;
             TIM2->CR1 &= ~TIM_CR1_CEN;
+            printf("[TIM2] CEN: %d -> %d\n", 
+                   (cr1_before & TIM_CR1_CEN) ? 1 : 0,
+                   (TIM2->CR1 & TIM_CR1_CEN) ? 1 : 0);
             g_system_state.channel_mask &= ~(1 << 1);
-        } else {
-            TIM2->CR1 |= TIM_CR1_CEN;
+        } 
+        else 
+        {
+            printf("[TIM2] Starting/updating (RPM=%d)\n", vFRrpm);
+            
+            // 1. Проверка и включение тактирования
+            uint32_t apb1enr1 = RCC->APB1ENR1;
+            if (!(apb1enr1 & RCC_APB1ENR1_TIM2EN)) {
+                printf("[TIM2_WARN] Clock was disabled, enabling\n");
+                __HAL_RCC_TIM2_CLK_ENABLE();
+                // Задержка для стабилизации
+                for(volatile int i=0; i<1000; i++);
+            }
+            
+            // 2. БЕЗОПАСНОЕ чтение CR1 - проверяем адрес
+            volatile uint32_t* tim2_cr1_ptr = &TIM2->CR1;
+            if ((uint32_t)tim2_cr1_ptr < 0x40000000 || (uint32_t)tim2_cr1_ptr > 0x60000000) {
+                printf("[TIM2_ERROR] Invalid TIM2 pointer!\n");
+                return;
+            }
+            
+            uint32_t cr1_before = TIM2->CR1;
+            printf("[TIM2] CR1 read: 0x%04lX\n", cr1_before);
+            
+            // 3. Включение таймера
+            TIM2->CR1 = cr1_before | TIM_CR1_CEN;
+            
+            uint32_t cr1_after = TIM2->CR1;
+            printf("[TIM2] CEN set: %d -> %d\n",
+                   (cr1_before & TIM_CR1_CEN) ? 1 : 0,
+                   (cr1_after & TIM_CR1_CEN) ? 1 : 0);
+            
             g_system_state.channel_mask |= (1 << 1);
             
+            // 4. Расчет периода
+            if (vFRrpm <= 0) {
+                printf("[TIM2_ERROR] Invalid RPM=%d\n", vFRrpm);
+                whl_arr[numFR]->prev_speed = vFRrpm;
+                return;
+            }
+            
             uint32_t period = calculete_period_only(vFRrpm);
-            TIM2->CR1 |= TIM_CR1_ARPE;
+            printf("[TIM2] Period calculated: %lu\n", period);
+            
+            // 5. БЕЗОПАСНАЯ запись ARR - пошагово
+            printf("[TIM2] Step 1: Save CR1\n");
+            uint32_t saved_cr1 = TIM2->CR1;
+            
+            printf("[TIM2] Step 2: Disable ARPE\n");
+            TIM2->CR1 = saved_cr1 & ~TIM_CR1_ARPE;
+            
+            printf("[TIM2] Step 3: Write ARR\n");
             TIM2->ARR = period;
+            
+            printf("[TIM2] Step 4: Restore CR1 with ARPE\n");
+            TIM2->CR1 = saved_cr1 | TIM_CR1_ARPE;
+            
+            printf("[TIM2] Step 5: Generate UG\n");
+            TIM2->EGR |= TIM_EGR_UG;
+            
+            // 6. ФИНАЛЬНАЯ проверка - отдельными printf
+            printf("[TIM2] Step 6: Verify\n");
+            
+            uint32_t final_cr1 = TIM2->CR1;
+            printf("[TIM2] Final CR1: 0x%04lX\n", final_cr1);
+            
+            uint32_t final_arr = TIM2->ARR;
+            printf("[TIM2] Final ARR: %lu\n", final_arr);
+            
+            uint32_t final_psc = TIM2->PSC;
+            printf("[TIM2] Final PSC: %lu\n", final_psc);
+            
+            printf("[TIM2] Setup complete\n");
         }
+        
         whl_arr[numFR]->prev_speed = vFRrpm;
     }
     
+    // RL wheel (TIM3)
     if (vRLrpm != whl_arr[numRL]->prev_speed) {
         update_wheel_seamless(TIM3, vRLrpm, whl_arr[numRL]);
     }
     
+    // RR wheel (TIM4)
     if (vRRrpm != whl_arr[numRR]->prev_speed) {
         update_wheel_seamless(TIM4, vRRrpm, whl_arr[numRR]);
     }
+    
+    printf("[SET] Done\n");
 }
 
 void HAL_TIM_PeriodElapsedCallback(TIM_HandleTypeDef *htim)
@@ -399,8 +551,8 @@ void HAL_TIM_PeriodElapsedCallback(TIM_HandleTypeDef *htim)
         tim4_irq_counter++;  // Теперь переменная объявлена
         HAL_GPIO_TogglePin(GPIOB, GPIO_PIN_9);
         
-        // Логируем каждое 10-е прерывание
-        if (tim4_irq_counter % 10 == 0) {
+        // Логируем каждое 300-е прерывание
+        if (tim4_irq_counter % 300 == 0) {
             printf("[IRQ TIM4] #%lu\n", tim4_irq_counter);
         }
     }
@@ -572,6 +724,9 @@ void diagnostic_gpio_status(void) {
     }
 }
 
+
+
+
 void diagnostic_alternative_functions(void) {
     static uint32_t last_af_debug = 0;
     uint32_t current_time = HAL_GetTick();
@@ -601,6 +756,31 @@ void diagnostic_alternative_functions(void) {
                   (SYSCFG->EXTICR[3] >> 12) & 0x0F);
     }
 }
+
+// Добавь эту проверку:
+void check_timer_interrupts(void)
+{
+    static uint32_t last_af_debug4 = 0;
+    uint32_t current_time = HAL_GetTick();
+
+    if(current_time - last_af_debug4 > 3000) {
+        last_af_debug4 = current_time;
+        my_printf("\n=== TIMER INTERRUPTS CHECK ===\n");
+        my_printf("TIM1 DIER: 0x%04X (UIE=%d)\n", TIM1->DIER, (TIM1->DIER & TIM_DIER_UIE) ? 1 : 0);
+        my_printf("TIM2 DIER: 0x%04X (UIE=%d)\n", TIM2->DIER, (TIM2->DIER & TIM_DIER_UIE) ? 1 : 0);
+        my_printf("TIM3 DIER: 0x%04X (UIE=%d)\n", TIM3->DIER, (TIM3->DIER & TIM_DIER_UIE) ? 1 : 0);
+        my_printf("TIM4 DIER: 0x%04X (UIE=%d)\n", TIM4->DIER, (TIM4->DIER & TIM_DIER_UIE) ? 1 : 0);
+        
+        // Проверь NVIC
+        my_printf("NVIC TIM1_UP: %s\n", NVIC_GetEnableIRQ(TIM1_UP_TIM16_IRQn) ? "ON" : "OFF");
+        my_printf("NVIC TIM2: %s\n", NVIC_GetEnableIRQ(TIM2_IRQn) ? "ON" : "OFF");
+        my_printf("NVIC TIM3: %s\n", NVIC_GetEnableIRQ(TIM3_IRQn) ? "ON" : "OFF");
+        my_printf("NVIC TIM4: %s\n", NVIC_GetEnableIRQ(TIM4_IRQn) ? "ON" : "OFF");
+        my_printf("==============================\n");
+    }
+}
+
+
 
 /* USER CODE END 0 */
 
@@ -764,6 +944,7 @@ int main(void)
     diagnostic_mode_status();
     diagnostic_gpio_status();
     diagnostic_alternative_functions();
+    check_timer_interrupts();
 
 #ifdef DEBUG
     static uint32_t last_debug = 0;
@@ -787,9 +968,14 @@ int main(void)
 #endif
 
     process_can_in_main();
+
     
     if (freshCanMsg == 1) {
         freshCanMsg = 0;
+        my_printf("[PROCESS_CAN] ID: 0x%03X, Mode: %s, DLC: %d\n",
+                  can_rx_msg.id, 
+                  get_mode_name(g_system_state.current_mode),
+                  can_rx_msg.dlc);
         
         if(g_system_state.current_mode == MODE_RPM_DYNAMIC) {
             int vFLrpm = ((uint16_t)canRX[0] << 8) | canRX[1];

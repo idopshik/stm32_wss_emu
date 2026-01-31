@@ -189,10 +189,10 @@ void system_switch_mode(operation_mode_t new_mode)
             break;
             
         case MODE_DISABLED:
-            TIM1->CR1 &= ~TIM_CR1_CEN;
-            TIM2->CR1 &= ~TIM_CR1_CEN;
-            TIM3->CR1 &= ~TIM_CR1_CEN;
-            TIM4->CR1 &= ~TIM_CR1_CEN;
+            /* TIM1->CR1 &= ~TIM_CR1_CEN; */
+            /* TIM2->CR1 &= ~TIM_CR1_CEN; */
+            /* TIM3->CR1 &= ~TIM_CR1_CEN; */
+            /* TIM4->CR1 &= ~TIM_CR1_CEN; */
             break;
             
         default:
@@ -346,10 +346,20 @@ void enter_hi_impedance_mode(void)
 
 void exit_hi_impedance_mode(void)
 {
-    // Выключение SSR
+#ifdef DEBUG_SYSTEM
+    my_printf("[HI-Z] Exiting Hi-Z mode\n");
+#endif
+
+    // 1. ВКЛЮЧАЕМ ТАКТИРОВАНИЕ ТАЙМЕРОВ
+    __HAL_RCC_TIM1_CLK_ENABLE();
+    __HAL_RCC_TIM2_CLK_ENABLE();
+    __HAL_RCC_TIM3_CLK_ENABLE();
+    __HAL_RCC_TIM4_CLK_ENABLE();
+
+    // 2. Выключение SSR
     HAL_GPIO_WritePin(GPIOB, SOLID_RELAY_CONTROL_Pin, GPIO_PIN_RESET);
 
-    // Восстановление GPIO
+    // 3. Восстановление GPIO
     GPIO_InitTypeDef GPIO_InitStruct = {0};
     GPIO_InitStruct.Mode = GPIO_MODE_AF_PP;
     GPIO_InitStruct.Pull = GPIO_NOPULL;
@@ -375,10 +385,49 @@ void exit_hi_impedance_mode(void)
     GPIO_InitStruct.Alternate = GPIO_AF2_TIM4;
     HAL_GPIO_Init(GPIOB, &GPIO_InitStruct);
 
-    // Восстановление состояния
+    // 4. МИНИМАЛЬНАЯ ИНИЦИАЛИЗАЦИЯ ТАЙМЕРОВ (без прерываний!)
+    // TIM1
+    TIM1->CR1 = 0;
+    TIM1->PSC = 24;
+    TIM1->ARR = 65535;
+    TIM1->CNT = 0;
+    
+    // TIM2
+    TIM2->CR1 = 0;
+    TIM2->PSC = 12;
+    TIM2->ARR = 65535;
+    TIM2->CNT = 0;
+    
+    // TIM3
+    TIM3->CR1 = 0;
+    TIM3->PSC = 24;
+    TIM3->ARR = 65535;
+    TIM3->CNT = 0;
+    
+    // TIM4
+    TIM4->CR1 = 0;
+    TIM4->PSC = 24;
+    TIM4->ARR = 65535;
+    TIM4->CNT = 0;
+
+
+        // После базовой инициализации таймеров:
+    TIM1->DIER |= TIM_DIER_UIE;  // ВКЛЮЧИТЬ прерывания!
+    TIM2->DIER |= TIM_DIER_UIE;
+    TIM3->DIER |= TIM_DIER_UIE;
+    TIM4->DIER |= TIM_DIER_UIE;
+
+    // И в NVIC:
+    NVIC_EnableIRQ(TIM1_UP_TIM16_IRQn);
+    NVIC_EnableIRQ(TIM2_IRQn);
+    NVIC_EnableIRQ(TIM3_IRQn);
+    NVIC_EnableIRQ(TIM4_IRQn);
+
+    // 5. Восстановление состояния
     g_system_state.hi_impedance_active = 0;
 
+
 #ifdef DEBUG_SYSTEM
-    my_printf("[HI-Z] Exiting Hi-Z mode\n");
+    my_printf("[HI-Z] Timers ready (not started yet)\n");
 #endif
 }
