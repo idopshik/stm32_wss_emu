@@ -33,6 +33,7 @@
 /* USER CODE BEGIN PTD */
 
 #define CAN_SPECIAL_ID 0x003
+#define CAN_CMD_ID     0x004      // Новый ID для команд
 #define APB1_CLK 150000000
 #define MinutTeethFactor 1.6
 #define numFL 0
@@ -41,17 +42,33 @@
 #define numRR 3
 
 FDCAN_TxHeaderTypeDef TxHeader1;
-
 FDCAN_RxHeaderTypeDef RxHeader1;
 
 uint8_t canRX[8];  // CAN Bus Receive Buffer
 uint8_t freshCanMsg = 0;
+uint8_t freshCanCmd = 0;        // Новый флаг для команд
+uint8_t canCmdData[8];          // Буфер для команд
 
 char ms100Flag = 0;
 char ms100Flag_2 = 0;
 
 uint8_t recievingcounger = 0;    // for LED logic
 uint8_t can_active_receiving = 0;
+
+// Структура для режимов (простая версия)
+typedef enum {
+    MODE_NORMAL = 0,      // Рабочий режим RPM
+    MODE_HI_Z = 1,        // Высокий импеданс (все выключено)
+    MODE_TEST = 2,        // Тестовый режим
+    MODE_BOOT = 3         // Режим загрузки
+} system_mode_t;
+
+typedef struct {
+    system_mode_t current_mode;
+    uint8_t channel_enabled;     // Биты 0-3: включенные каналы
+    uint32_t last_can_time;
+    uint8_t led_blink;           // Для индикации режима
+} system_state_t;
 
 typedef struct {
     uint8_t wheel_num;
@@ -725,48 +742,48 @@ int main(void)
 
     HAL_GPIO_WritePin(GPIOA, EXT_LED_Pin, GPIO_PIN_SET);
 
-    while (1) {
-    /* USER CODE END WHILE */
-
-    /* USER CODE BEGIN 3 */
-
-        /* HAL_Delay(0.1); // Insert delay 100 ms */
-
-        /* HAL_GPIO_TogglePin(GPIOB, Out_1_Pin); */
-        /* HAL_GPIO_TogglePin(GPIOB, Out_2_Pin); */
-
-        if (freshCanMsg == 1) {
-            freshCanMsg = 0;
-            HAL_GPIO_TogglePin(LED_Blue_GPIO_Port, LED_Blue_Pin);
-
-            /*PrintArrayLen(canRX, sizeof(canRX));  // works
-             * perfectly.*/
-            // PrintArray(canRX);  // But why??
-
-            int vFLrpm, vFRrpm, vRLrpm, vRRrpm;
-
-            vFLrpm = (uint8_t)canRX[0] << 8 | (uint8_t)canRX[1];
-            vFRrpm = (uint8_t)canRX[2] << 8 | (uint8_t)canRX[3];
-            vRLrpm = (uint8_t)canRX[4] << 8 | (uint8_t)canRX[5];
-            vRRrpm = (uint8_t)canRX[6] << 8 | (uint8_t)canRX[7];
-
-            /*my_printf("vFLrpm: %d vFRrpm: %d  vRLrpm: %d  vRRrpm: %d \n", vFLrpm, vFRrpm, vRLrpm,
-             * vRRrpm);*/
+    
+while (1) {
+    // Обработка RPM данных (ID 0x003)
+    if (freshCanMsg == 1) {
+        freshCanMsg = 0;
+        
+        if(sys_state.current_mode == MODE_NORMAL) {
+            // Только в нормальном режиме обрабатываем RPM
+            int vFLrpm = (uint8_t)canRX[0] << 8 | (uint8_t)canRX[1];
+            int vFRrpm = (uint8_t)canRX[2] << 8 | (uint8_t)canRX[3];
+            int vRLrpm = (uint8_t)canRX[4] << 8 | (uint8_t)canRX[5];
+            int vRRrpm = (uint8_t)canRX[6] << 8 | (uint8_t)canRX[7];
+            
             set_new_speeds(vFLrpm, vFRrpm, vRLrpm, vRRrpm, whl_arr);
-
-            counter += 1;
-
-            if (ms100Flag > 0) {
-                ms100Flag = 0;
-
-                HAL_GPIO_TogglePin(GPIOB, Out_1_Pin);
-            }
-
-
-            can_active_receiving = 1;    //LED logic
-            recievingcounger = 4;
+            
+            // Обновляем время последней команды
+            sys_state.last_can_time = HAL_GetTick();
+        }
+        
+        // Индикация приема
+        can_active_receiving = 1;
+        recievingcounger = 4;
+    }
+    
+    // Обработка команд (ID 0x004)
+    if (freshCanCmd == 1) {
+        freshCanCmd = 0;
+        process_can_command(canCmdData[0], canCmdData);
+    }
+    
+#ifdef AUTOHIZ
+    // Таймаут: если долго нет команд - переходим в Hi-Z
+    if(sys_state.current_mode == MODE_NORMAL) {
+        if(HAL_GetTick() - sys_state.last_can_time > 5000) { // 5 секунд
+            my_printf("[TIMEOUT] No CAN data for 5s\n");
+            enter_hi_z_mode();
         }
     }
+#endif
+    
+}
+
 
   /* USER CODE END 3 */
 }
@@ -1247,55 +1264,159 @@ static void MX_GPIO_Init(void)
 
 /* USER CODE BEGIN 4 */
 
+// Инициализация системы
+void system_init(void)
+{
+    sys_state.current_mode = MODE_BOOT;
+    sys_state.channel_enabled = 0;
+    sys_state.last_can_time = HAL_GetTick();
+    sys_state.led_blink = 0;
+    
+    my_printf("[SYS] Initialized - Boot mode\n");
+}
+
+// Вход в Hi-Z режим
+void enter_hi_z_mode(void)
+{
+    my_printf("[MODE] Entering Hi-Z\n");
+    
+    // 1. Выключаем все таймеры
+    TIM1->CR1 &= ~TIM_CR1_CEN;
+    TIM2->CR1 &= ~TIM_CR1_CEN;
+    TIM3->CR1 &= ~TIM_CR1_CEN;
+    TIM4->CR1 &= ~TIM_CR1_CEN;
+    
+    // 2. Сбрасываем все скорости в структурах
+    for(int i = 0; i < 4; i++) {
+        if(whl_arr[i] != NULL) {
+            whl_arr[i]->prev_speed = 0;
+        }
+    }
+    
+    // 3. Обновляем состояние
+    sys_state.current_mode = MODE_HI_Z;
+    sys_state.channel_enabled = 0;
+    
+    // 4. Светодиодная индикация
+    HAL_GPIO_WritePin(GPIOA, EXT_LED_Pin, GPIO_PIN_SET);
+}
+
+// Выход из Hi-Z режима
+void exit_hi_z_mode(void)
+{
+    my_printf("[MODE] Exiting Hi-Z\n");
+    sys_state.current_mode = MODE_NORMAL;
+    // Таймеры включатся при первом RPM сообщении
+}
+
+// Обработка команд из CAN
+void process_can_command(uint8_t cmd, uint8_t *data)
+{
+    switch(cmd) {
+        case 0x01:  // Войти в Hi-Z
+            enter_hi_z_mode();
+            break;
+            
+        case 0x02:  // Выйти из Hi-Z
+            exit_hi_z_mode();
+            break;
+            
+        case 0x03:  // Тестовый режим - установить фиксированные RPM
+            if(sys_state.current_mode != MODE_HI_Z) {
+                int rpm = (data[1] << 8) | data[2];
+                set_new_speeds(rpm, rpm, rpm, rpm, whl_arr);
+                my_printf("[TEST] Fixed RPM: %d\n", rpm);
+            }
+            break;
+            
+        case 0x04:  // Включить/выключить каналы
+            {
+                uint8_t mask = data[1];
+                sys_state.channel_enabled = mask;
+                my_printf("[CMD] Channel mask: 0x%02X\n", mask);
+            }
+            break;
+            
+        default:
+            my_printf("[CMD] Unknown: 0x%02X\n", cmd);
+            break;
+    }
+}
+
 static void CANFD1_Set_Filtes(void)
 {
     FDCAN_FilterTypeDef sFilterConfig;
 
+    // Фильтр 0: Принимаем ID 0x003 (RPM данные)
     sFilterConfig.IdType = FDCAN_STANDARD_ID;
     sFilterConfig.FilterIndex = 0;
     sFilterConfig.FilterType = FDCAN_FILTER_MASK;
     sFilterConfig.FilterConfig = FDCAN_FILTER_TO_RXFIFO0;
-    sFilterConfig.FilterID1 = CAN_SPECIAL_ID;
-    sFilterConfig.FilterID2 = 0x07FF;
-    // sFilterConfig.RxBufferIndex = 0;
+    sFilterConfig.FilterID1 = 0x003;      // ID 0x003
+    sFilterConfig.FilterID2 = 0x7FF;      // Маска: сравниваем все 11 бит
+    
     if (HAL_FDCAN_ConfigFilter(&hfdcan1, &sFilterConfig) != HAL_OK) {
-        /* Filter configuration Error */
         Error_Handler();
     }
-    else {
-        my_printf("filterOK\n\r");
+    
+    // Фильтр 1: Принимаем ID 0x004 (команды управления)
+    sFilterConfig.FilterIndex = 1;
+    sFilterConfig.FilterID1 = 0x004;      // ID 0x004
+    sFilterConfig.FilterID2 = 0x7FF;      // Маска: сравниваем все 11 бит
+    
+    if (HAL_FDCAN_ConfigFilter(&hfdcan1, &sFilterConfig) != HAL_OK) {
+        Error_Handler();
     }
 
-    if (HAL_FDCAN_ConfigGlobalFilter(&hfdcan1, FDCAN_REJECT, FDCAN_REJECT, FDCAN_FILTER_REMOTE, FDCAN_FILTER_REMOTE) !=
-        HAL_OK) {
+    // Настраиваем глобальный фильтр
+    if (HAL_FDCAN_ConfigGlobalFilter(&hfdcan1, 
+        FDCAN_REJECT,          // Стандартные ID не прошедшие фильтр
+        FDCAN_REJECT,          // Расширенные ID не прошедшие фильтр
+        FDCAN_FILTER_REMOTE,   // Удаленные фреймы с фильтром
+        FDCAN_FILTER_REMOTE)   // Удаленные фреймы без фильтра
+        != HAL_OK) {
         Error_Handler();
     }
 
-    // Activate the notification for new data in FIFO0 for FDCAN1
-    if (HAL_FDCAN_ActivateNotification(&hfdcan1, FDCAN_IT_RX_FIFO0_NEW_MESSAGE, 0) != HAL_OK) {
+    // Активируем прерывание для новых сообщений в FIFO0
+    if (HAL_FDCAN_ActivateNotification(&hfdcan1, 
+        FDCAN_IT_RX_FIFO0_NEW_MESSAGE, 0) != HAL_OK) {
         Error_Handler();
     }
-    // STart FDCAN1
+    
+    // Запускаем FDCAN
     if (HAL_FDCAN_Start(&hfdcan1) != HAL_OK) {
         Error_Handler();
     }
+    
+    my_printf("CAN Filter: ID 0x003 & 0x004\n");
 }
 
 // FDCAN1 Callback
 void HAL_FDCAN_RxFifo0Callback(FDCAN_HandleTypeDef *hfdcan, uint32_t RxFifo0ITs)
 {
     if ((RxFifo0ITs & FDCAN_IT_RX_FIFO0_NEW_MESSAGE) != RESET) {
-        /* Retreive Rx messages from RX FIFO0 */
+        /* Получаем сообщение из RX FIFO0 */
         if (HAL_FDCAN_GetRxMessage(hfdcan, FDCAN_RX_FIFO0, &RxHeader1, canRX) != HAL_OK) {
-            /* Reception Error */
+            /* Ошибка приема */
             Error_Handler();
         }
         else {
-            if ((RxHeader1.Identifier != CAN_SPECIAL_ID)) {
-                my_printf("wrongID: %#x \n\r", RxHeader1.Identifier);
+            uint32_t id = RxHeader1.Identifier;
+            
+            if (id == 0x003) {
+                // RPM данные - как раньше
+                freshCanMsg = 1;
+                /* my_printf("[CAN] RPM data ID: 0x%03X\n", id); */
+            }
+            else if (id == 0x004) {
+                // Команды управления
+                my_printf("[CAN] Command ID: 0x%03X, Cmd: 0x%02X\n", id, canRX[0]);
+                // Флаг для обработки команды в основном цикле
+                // Можно добавить отдельный флаг для команд
             }
             else {
-                freshCanMsg = 1;
+                my_printf("[CAN] Unknown ID: 0x%03X\n", id);
             }
         }
     }
