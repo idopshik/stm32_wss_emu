@@ -29,6 +29,8 @@
 
 #include "system_modes.h"
 #include "can_commands.h"
+#include "wheel_control.h"
+#include "can_handler.h"
 
 /* USER CODE END Includes */
 
@@ -37,8 +39,6 @@
 
 #define CAN_SPECIAL_ID 0x003
 #define CAN_CMD_ID     0x004      // Новый ID для команд
-#define APB1_CLK 150000000
-#define MinutTeethFactor 1.6
 #define numFL 0
 #define numFR 1
 #define numRL 2
@@ -47,35 +47,20 @@
 FDCAN_TxHeaderTypeDef TxHeader1;
 FDCAN_RxHeaderTypeDef RxHeader1;
 
-uint8_t canRX[8];  // CAN Bus Receive Buffer
-uint8_t freshCanMsg = 0;
-uint8_t freshCanCmd = 0;        // ← ДОБАВИТЬ
-uint8_t canCmdData[8];          // ← ДОБАВИТЬ
 
 char ms100Flag = 0;
 char ms100Flag_2 = 0;
 
-uint8_t recievingcounger = 0;    // for LED logic
-uint8_t can_active_receiving = 0;
 
 volatile uint8_t can_tx_status_pending = 0;
 volatile uint8_t can_tx_error_pending = 0;
 uint8_t can_tx_error_code = 0;            
 
-// Структура для колеса (только старые поля!)
-typedef struct {
-    uint8_t wheel_num;
-    TIM_HandleTypeDef *htim;
-    int prev_speed;
-    int prev_psc;
-    int cur_psc;
-    int initial_tmp_flag;
-    uint8_t psc_change_flag;
-} whl_chnl;
-
-whl_chnl *whl_arr[4];
 
 /* USER CODE END PTD */
+
+uint8_t recievingcounger = 0;    // for LED logic
+uint8_t can_active_receiving = 0;
 
 /* Private define ------------------------------------------------------------*/
 /* USER CODE BEGIN PD */
@@ -119,13 +104,9 @@ static void MX_USART1_UART_Init(void);
 
 /* USER CODE BEGIN PFP */
 
-static void CANFD1_Set_Filtes(void);
 void my_printf(const char *fmt, ...);
-int calculete_prsc_and_perio(int val, int *arr, whl_chnl *whl_arr[], int wheelnum);
-uint32_t calculete_period_only(int val);
-void set_new_speeds(int vFLrpm, int vFRrpm, int vRLrpm, int vRRrpm, whl_chnl *whl_arr[]);
+void update_led_indication(void);
 
-void process_can_in_main_simple(void); 
 /* USER CODE END PFP */
 
 /* Private user code ---------------------------------------------------------*/
@@ -163,399 +144,7 @@ void PrintArray(uint8_t *data_arr)
     printf("\n");
 }
 
-uint32_t calculete_period_only(int val)
-{
-    // For 32bit timer
 
-    float factor = 0.02;
-    return (APB1_CLK / (val * factor * MinutTeethFactor * (12 + 1))) - 1;  // значение регистра ARR
-}
-
-int calculete_prsc_and_perio(int val, int *arr, whl_chnl *whl_arr[], int wheelnum)
-{
-    // Нужно будет отладить.
-
-    float factor = 0.02;
-
-    int newpresc;
-
-    if (val < 4274) {
-        newpresc = 1200;
-    }
-    else {
-        newpresc = 24;
-    }
-
-    // Только временно
-    if (whl_arr[wheelnum]->initial_tmp_flag == 0) {
-        /* arr[0] =  newpresc; */
-        /* my_printf("prescaler_only_once for %d wheel\n\r", wheelnum); */
-        whl_arr[wheelnum]->initial_tmp_flag = 1;
-        arr[0] = 24;  // tmp
-    }
-    else {
-        arr[0] = whl_arr[wheelnum]->prev_psc;
-    }
-    whl_arr[wheelnum]->prev_psc = newpresc;
-
-    arr[1] = newpresc;
-
-    uint32_t tmp;
-    /* int tmp; */
-    tmp = (APB1_CLK / (val * factor * MinutTeethFactor * (arr[0] + 1))) - 1;  // значение регистра ARR
-    if (tmp > 65536) {
-        /* my_printf(" -------------> GLITCH!\n\r"); */
-        /* my_printf("res: %d \n\r", tmp); */
-        /* my_printf("PSC:%d \n\r", arr[0]); */
-        /* my_printf("signal: %d \n\n\r", val); */
-        tmp = 65535;  // обрезаем. Хоть это и не правильно1
-    }
-    arr[2] = (int)tmp;
-    if (arr[0] != arr[1]) {
-        /* my_printf("             --              \n\r"); */
-        /* my_printf("old_arr: %d\n\r", tmp); */
-
-        tmp = ((APB1_CLK / (val * factor * MinutTeethFactor * (newpresc + 1))) - 1);  // значение регистра ARR
-                                                                                      //
-        /* my_printf("new_arr: %d\n\r", tmp); */
-
-        if (tmp > 65536) {
-            tmp = 65535;  // обрезаем. Хоть это и не правильно.
-        }
-
-        arr[3] = (int)tmp;
-        /* arr[3] = 100; */
-
-        /* my_printf("old_arr_casted: %d\n\r", arr[2]); */
-        /* my_printf("arr_casted: %d\n\r", arr[3]); */
-        /* my_printf("PSC old: %d\n\r", arr[0]); */
-        /* my_printf("PSC current: %d\n\n\r", arr[1]); */
-        /* my_printf("val: %d\n\n\r", val); */
-        /* my_printf("\n"); */
-    }
-    else {
-        arr[3] = arr[2];
-    }
-
-    return 0;
-}
-
-void set_new_speeds(int vFLrpm, int vFRrpm, int vRLrpm, int vRRrpm, whl_chnl *whl_arr[])
-{
-    //__HAL_TIM_SET_PRESCALER(&htim3, val );
-    //__HAL_TIM_SET_AUTORELOAD(&htim3, val );
-    /* permutations! */
-    /* 1) changing prescaler up or down  */
-    /* 2) the same prescaler */
-    /* ----- */
-    /* 1) going up (speed up) */
-    /* 2) going down. */
-
-    // 32-bit timers first
-    //
-
-    int arr_with_calculations[4] = {300, 300, 300, 300};
-
-    ////////////    TIMER1 -  FL  ///////////////
-
-    if (vFLrpm < 0x3F) {
-        TIM1->CR1 &= ~((uint16_t)TIM_CR1_CEN);
-    }
-    else {
-        TIM1->CR1 |= TIM_CR1_CEN;  // enable
-
-        calculete_prsc_and_perio(vFLrpm, arr_with_calculations, whl_arr, numFL);
-
-        if (vFLrpm != whl_arr[numFL]->prev_speed) {
-            if (vFLrpm > whl_arr[numFL]->prev_speed) {
-                if (whl_arr[numFL]->psc_change_flag == 1) {
-                    // this isn't functional now.
-                    whl_arr[numFL]->psc_change_flag = 0;
-                    TIM1->CCMR1 |= TIM_CCMR1_OC1M_0;
-                    TIM1->CCMR1 |= TIM_CCMR1_OC1M_1;
-                }
-
-                if (TIM1->CNT > (arr_with_calculations[2])) {
-                    TIM1->PSC = arr_with_calculations[1];
-                    TIM1->ARR = arr_with_calculations[3];
-                    TIM1->EGR = TIM_EGR_UG;
-                }
-                /*
-                В любом случае рассчитываем точку по старому прескалеру.
-                Если точка пройдена (по старому прескалеру) то.
-
-                     - Если есть новое значение пресклера, кладём его в
-                     PSC . Мы всё равно ведь будем вызывать  UG ?? оно как
-                     раз применится.
-                     - Кладём ARR (рассчитанный по новому)
-                     - Вызываем UG.
-                 */
-                else {
-                    /*
-                     Точка ещё не пройдена. В этом случае нельзя вызвать UG.
-                     будет Glitch.
-                     - пишем новый ARR  по старому прескалеру (без буфера)
-                     - если PSC поменялся, то кладём уже по буферу и PSC и ARR.
-                     */
-                    TIM1->CR1 |= TIM_CR1_ARPE;
-                    TIM1->ARR = arr_with_calculations[2];
-                    if (arr_with_calculations[0] != arr_with_calculations[1]) {
-                        TIM1->CR1 &= ~TIM_CR1_ARPE;
-                        TIM1->PSC = arr_with_calculations[1];
-                        TIM1->ARR = arr_with_calculations[3];
-
-                        // только для теста. TODO
-                        TIM1->EGR = TIM_EGR_UG;
-                    }
-
-                    /* TIM1->CR1 |= TIM_CR1_ARPE;    // будем писать сразу в ARR (мимо shadow) */
-                    /* TIM1->ARR = arr_with_calculations[2]; */
-                    /* [> Костыльный предохранитель от убегания. <] */
-                    /* if (TIM1->CNT > arr_with_calculations[2]) { */
-                    /* TIM1->EGR |= TIM_EGR_UG; */
-                    /* } */
-                }
-            }
-            else {
-                /*
-                меньше. Скорость уменьшается. В этом случае обычно.период
-                увеличивается. Но - прескалер может
-                увеличиться (переключиться), и тем самым рассчётное значение ARR
-                может быть значительно меньше, чем текущее.
-                1.  Если не меняется  PSC - пишем  ARR без буфер. Это не
-                вызывает никакх проблем вообще
-                2.  �?зменение  PSC в этом случае пишем по старому прескелеру
-                без буфера, рассчитываем новую пару и пишем по буферу!
-                 */
-
-                TIM1->CR1 |= TIM_CR1_ARPE;
-                TIM1->ARR = arr_with_calculations[2];
-
-                if (arr_with_calculations[0] != arr_with_calculations[1]) {
-                    /* TIM1->CR1 &= ~TIM_CR1_ARPE; */
-
-                    TIM1->PSC = arr_with_calculations[1];
-                    TIM1->ARR = arr_with_calculations[3];
-                }
-            }
-            whl_arr[numFL]->initial_tmp_flag = arr_with_calculations[1];
-            whl_arr[numFL]->prev_speed = vFLrpm;
-        }
-    }
-
-    ////////////    TIMER2 -  FR  ///////////////
-    if (vFRrpm < 0x3F) {
-        TIM2->CR1 &= ~((uint16_t)TIM_CR1_CEN);
-    }
-    else {
-        TIM2->CR1 |= TIM_CR1_CEN;  // enable
-                                   //
-        uint32_t current_32bit_period = calculete_period_only(vFRrpm);
-
-        if (vFRrpm > whl_arr[numFR]->prev_speed) {
-            TIM2->CR1 |= TIM_CR1_ARPE;
-            TIM2->ARR = current_32bit_period;
-
-            if (TIM2->CNT > current_32bit_period) {
-                TIM2->EGR |= TIM_EGR_UG;
-            }
-        }
-        else {
-            /* my_printf(" ARR: %d\n\r", arr_with_calculations[0]); */
-
-            if (TIM2->CNT < current_32bit_period) {
-                TIM2->CR1 |= TIM_CR1_ARPE;
-                TIM2->ARR = current_32bit_period;
-            }
-            else {
-                // Не должна никогда выполняться.
-                TIM2->CR1 &= ~TIM_CR1_ARPE;
-                TIM2->ARR = current_32bit_period;
-            }
-        }
-
-        // Костыльный предохранитель от убегания.
-        if (TIM2->CNT > current_32bit_period) {
-            TIM2->EGR |= TIM_EGR_UG;
-        }
-    }
-    whl_arr[numFR]->prev_speed = vFRrpm;
-
-    
-    ////////////    TIMER3 -  RL  ///////////////
-
-    if (vRLrpm < 0x3F) {
-        TIM3->CR1 &= ~((uint16_t)TIM_CR1_CEN);
-    }
-    else {
-        TIM3->CR1 |= TIM_CR1_CEN;  // enable
-
-        calculete_prsc_and_perio(vRLrpm, arr_with_calculations, whl_arr, numRL);
-
-        if (vRLrpm != whl_arr[numRL]->prev_speed) {
-            if (vRLrpm > whl_arr[numRL]->prev_speed) {
-                if (whl_arr[numRL]->psc_change_flag == 1) {
-                    // this isn't functional now.
-                    whl_arr[numRL]->psc_change_flag = 0;
-                    TIM3->CCMR1 |= TIM_CCMR1_OC1M_0;
-                    TIM3->CCMR1 |= TIM_CCMR1_OC1M_1;
-                }
-
-                if (TIM3->CNT > (arr_with_calculations[2])) {
-                    TIM3->PSC = arr_with_calculations[1];
-                    TIM3->ARR = arr_with_calculations[3];
-                    TIM3->EGR = TIM_EGR_UG;
-                }
-                /*
-                В любом случае рассчитываем точку по старому прескалеру.
-                Если точка пройдена (по старому прескалеру) то.
-
-                     - Если есть новое значение пресклера, кладём его в
-                     PSC . Мы всё равно ведь будем вызывать  UG ?? оно как
-                     раз применится.
-                     - Кладём ARR (рассчитанный по новому)
-                     - Вызываем UG.
-                 */
-                else {
-                    /*
-                     Точка ещё не пройдена. В этом случае нельзя вызвать UG.
-                     будет Glitch.
-                     - пишем новый ARR  по старому прескалеру (без буфера)
-                     - если PSC поменялся, то кладём уже по буферу и PSC и ARR.
-                     */
-                    TIM3->CR1 |= TIM_CR1_ARPE;
-                    TIM3->ARR = arr_with_calculations[2];
-                    if (arr_with_calculations[0] != arr_with_calculations[1]) {
-                        TIM3->CR1 &= ~TIM_CR1_ARPE;
-                        TIM3->PSC = arr_with_calculations[1];
-                        TIM3->ARR = arr_with_calculations[3];
-
-                        // только для теста. TODO
-                        TIM3->EGR = TIM_EGR_UG;
-                    }
-
-                    /* TIM3->CR1 |= TIM_CR1_ARPE;    // будем писать сразу в ARR (мимо shadow) */
-                    /* TIM3->ARR = arr_with_calculations[2]; */
-                    /* [> Костыльный предохранитель от убегания. <] */
-                    /* if (TIM3->CNT > arr_with_calculations[2]) { */
-                    /* TIM3->EGR |= TIM_EGR_UG; */
-                    /* } */
-                }
-            }
-            else {
-                /*
-                меньше. Скорость уменьшается. В этом случае обычно.период
-                увеличивается. Но - прескалер может
-                увеличиться (переключиться), и тем самым рассчётное значение ARR
-                может быть значительно меньше, чем текущее.
-                1.  Если не меняется  PSC - пишем  ARR без буфер. Это не
-                вызывает никакх проблем вообще
-                2.  �?зменение  PSC в этом случае пишем по старому прескелеру
-                без буфера, рассчитываем новую пару и пишем по буферу!
-                 */
-
-                TIM3->CR1 |= TIM_CR1_ARPE;
-                TIM3->ARR = arr_with_calculations[2];
-
-                if (arr_with_calculations[0] != arr_with_calculations[1]) {
-                    /* TIM3->CR1 &= ~TIM_CR1_ARPE; */
-
-                    TIM3->PSC = arr_with_calculations[1];
-                    TIM3->ARR = arr_with_calculations[3];
-                }
-            }
-            whl_arr[numRL]->initial_tmp_flag = arr_with_calculations[1];
-            whl_arr[numRL]->prev_speed = vRLrpm;
-        }
-    }
-
-    ////////////    TIMER4 -  RR  ///////////////
-
-    if (vRRrpm < 0x3F) {
-        TIM4->CR1 &= ~((uint16_t)TIM_CR1_CEN);
-    }
-    else {
-        TIM4->CR1 |= TIM_CR1_CEN;  // enable
-
-        calculete_prsc_and_perio(vRRrpm, arr_with_calculations, whl_arr, numRR);
-
-        if (vRRrpm != whl_arr[numRR]->prev_speed) {
-            if (vRRrpm > whl_arr[numRR]->prev_speed) {
-                if (whl_arr[numRR]->psc_change_flag == 1) {
-                    // this isn't functional now.
-                    whl_arr[numRR]->psc_change_flag = 0;
-                    TIM4->CCMR1 |= TIM_CCMR1_OC1M_0;
-                    TIM4->CCMR1 |= TIM_CCMR1_OC1M_1;
-                }
-
-                if (TIM4->CNT > (arr_with_calculations[2])) {
-                    TIM4->PSC = arr_with_calculations[1];
-                    TIM4->ARR = arr_with_calculations[3];
-                    TIM4->EGR = TIM_EGR_UG;
-                }
-                /*
-                В любом случае рассчитываем точку по старому прескалеру.
-                Если точка пройдена (по старому прескалеру) то.
-
-                     - Если есть новое значение пресклера, кладём его в
-                     PSC . Мы всё равно ведь будем вызывать  UG ?? оно как
-                     раз применится.
-                     - Кладём ARR (рассчитанный по новому)
-                     - Вызываем UG.
-                 */
-                else {
-                    /*
-                     Точка ещё не пройдена. В этом случае нельзя вызвать UG.
-                     будет Glitch.
-                     - пишем новый ARR  по старому прескалеру (без буфера)
-                     - если PSC поменялся, то кладём уже по буферу и PSC и ARR.
-                     */
-                    TIM4->CR1 |= TIM_CR1_ARPE;
-                    TIM4->ARR = arr_with_calculations[2];
-                    if (arr_with_calculations[0] != arr_with_calculations[1]) {
-                        TIM4->CR1 &= ~TIM_CR1_ARPE;
-                        TIM4->PSC = arr_with_calculations[1];
-                        TIM4->ARR = arr_with_calculations[3];
-
-                        // только для теста. TODO
-                        TIM4->EGR = TIM_EGR_UG;
-                    }
-
-                    /* TIM4->CR1 |= TIM_CR1_ARPE;    // будем писать сразу в ARR (мимо shadow) */
-                    /* TIM4->ARR = arr_with_calculations[2]; */
-                    /* [> Костыльный предохранитель от убегания. <] */
-                    /* if (TIM4->CNT > arr_with_calculations[2]) { */
-                    /* TIM4->EGR |= TIM_EGR_UG; */
-                    /* } */
-                }
-            }
-            else {
-                /*
-                меньше. Скорость уменьшается. В этом случае обычно.период
-                увеличивается. Но - прескалер может
-                увеличиться (переключиться), и тем самым рассчётное значение ARR
-                может быть значительно меньше, чем текущее.
-                1.  Если не меняется  PSC - пишем  ARR без буфер. Это не
-                вызывает никакх проблем вообще
-                2.  �?зменение  PSC в этом случае пишем по старому прескелеру
-                без буфера, рассчитываем новую пару и пишем по буферу!
-                 */
-
-                TIM4->CR1 |= TIM_CR1_ARPE;
-                TIM4->ARR = arr_with_calculations[2];
-
-                if (arr_with_calculations[0] != arr_with_calculations[1]) {
-                    /* TIM4->CR1 &= ~TIM_CR1_ARPE; */
-
-                    TIM4->PSC = arr_with_calculations[1];
-                    TIM4->ARR = arr_with_calculations[3];
-                }
-            }
-            whl_arr[numRR]->initial_tmp_flag = arr_with_calculations[1];
-            whl_arr[numRR]->prev_speed = vRRrpm;
-        }
-    }
-}
 
 
 void vprint(const char *fmt, va_list argp)
@@ -597,52 +186,7 @@ void print_test(void)
     my_printf("%s\r\n\r\n", "A string");
 }
 
-void HAL_TIM_PeriodElapsedCallback(TIM_HandleTypeDef *htim)
-{
-    if (htim->Instance == TIM6) {
-        /*my_printf("100 ms \n");*/
-        ms100Flag = 1;
-        ms100Flag_2 = 1;
-    }
-    if (htim->Instance == TIM8) {
-        // has to be 70 ms. to flash LED ~8 times a sec
 
-        if (can_active_receiving == 1){
-            // toggle LED
-            
-            HAL_GPIO_TogglePin(GPIOA, EXT_LED_Pin);
-
-            recievingcounger -= 1;
-
-            if (recievingcounger < 1){
-                can_active_receiving = 0;
-                // deactivate LED
-                HAL_GPIO_WritePin(GPIOA, EXT_LED_Pin, GPIO_PIN_SET);
-            }
-
-        }
-        
-    }
-
-    if (htim->Instance == TIM1) {
-        HAL_GPIO_TogglePin(GPIOA, tim1_out_Pin);
-    }
-    else if (htim->Instance == TIM3) {
-        HAL_GPIO_TogglePin(GPIOA, tim3_out_Pin);
-    }
-    else if (htim->Instance == TIM4) {
-        HAL_GPIO_TogglePin(GPIOB, tim4_out_Pin);
-    }
-}
-
-void calculate_arr(whl_chnl *whl_arr[], int whl)
-{
-    //
-    // примеры обращения к элемента структуры
-    //   whl_arr[whl]->pref_speed
-    //   whl_arr[whl]->cur_psc
-    //   whl_arr[whl]->flag
-}
 
 /* USER CODE END 0 */
 
@@ -685,7 +229,7 @@ int main(void)
   MX_USART1_UART_Init();
   /* USER CODE BEGIN 2 */
 
-    CANFD1_Set_Filtes();
+    can_handler_init();
 
 
     // Start four timers (как в старом коде)
@@ -705,7 +249,12 @@ int main(void)
 
     // Инициализация системы режимов
     system_init_modes();
-    
+    wheel_control_init();
+
+    // Изначально все выключено (Hi-Z режим активируется автоматом)
+
+    HAL_GPIO_WritePin(GPIOA, EXT_LED_Pin, GPIO_PIN_SET);
+
     whl_chnl fl_whl_s = {numFL, &htim1, 0, 24, 0, 0, 0};
     whl_chnl fr_whl_s = {numFR, &htim2, 0, 12, 0, 0, 0};
     whl_chnl rl_whl_s = {numRL, &htim3, 0, 24, 0, 0, 0};
@@ -716,11 +265,8 @@ int main(void)
     whl_arr[numRL] = &rl_whl_s;
     whl_arr[numRR] = &rr_whl_s;
 
-    // Изначально все выключено (Hi-Z режим активируется автоматом)
-
-    HAL_GPIO_WritePin(GPIOA, EXT_LED_Pin, GPIO_PIN_SET);
-
-    /* set_new_speeds(0,0,0,0, whl_arr); // initialy - no output */
+    // Вызов функции
+   set_new_speeds(0, 0, 0, 0, whl_arr);
 
     // Переход в Hi-Z режим после инициализации
     enter_hi_impedance_mode();
@@ -732,7 +278,7 @@ int main(void)
     
 while (1) {
     // Обработка RPM данных
-    process_can_in_main_simple();
+    can_process_in_main();
     
     // Проверка таймаутов - используем ПРАВИЛЬНЫЕ имена режимов
     if(g_system_state.current_mode == MODE_RPM_DYNAMIC) {  // ← ИСПРАВИТЬ
@@ -1230,124 +776,42 @@ static void MX_GPIO_Init(void)
 }
 
 /* USER CODE BEGIN 4 */
-
-// Обработка CAN в основном цикле (простая обертка)
-void process_can_in_main_simple(void)
+void update_led_indication(void)
 {
-    // Обработка RPM данных (ID 0x003)
-    if (freshCanMsg == 1) {
-        freshCanMsg = 0;
+    if (can_active_receiving == 1) {
+        // toggle LED
+        HAL_GPIO_TogglePin(GPIOA, EXT_LED_Pin);
+        recievingcounger -= 1;
         
-        // Используем правильный тип из system_modes.h
-        if(g_system_state.current_mode == MODE_RPM_DYNAMIC) {
-            int vFLrpm = (uint8_t)canRX[0] << 8 | (uint8_t)canRX[1];
-            int vFRrpm = (uint8_t)canRX[2] << 8 | (uint8_t)canRX[3];
-            int vRLrpm = (uint8_t)canRX[4] << 8 | (uint8_t)canRX[5];
-            int vRRrpm = (uint8_t)canRX[6] << 8 | (uint8_t)canRX[7];
-            
-            set_new_speeds(vFLrpm, vFRrpm, vRLrpm, vRRrpm, whl_arr);
-            
-            g_system_state.rpm_mode_active = 1;
-            g_system_state.last_can_command_time = HAL_GetTick();
+        if (recievingcounger < 1) {
+            can_active_receiving = 0;
+            HAL_GPIO_WritePin(GPIOA, EXT_LED_Pin, GPIO_PIN_SET);
         }
-        
-        // Индикация приема
-        can_active_receiving = 1;
-        recievingcounger = 4;
-    }
-    
-    // Обработка команд (ID 0x004)
-    if (freshCanCmd == 1) {
-        freshCanCmd = 0;
-        process_can_command(canCmdData);  // ← Вызываем из can_commands.c
-    }
-    
-    // Обработка статусов и ошибок
-    if (can_tx_status_pending) {
-        send_system_status();
-        can_tx_status_pending = 0;
-    }
-    
-    if (can_tx_error_pending) {
-        send_error_response(can_tx_error_code);
-        can_tx_error_pending = 0;
     }
 }
 
-
-static void CANFD1_Set_Filtes(void)
+void HAL_TIM_PeriodElapsedCallback(TIM_HandleTypeDef *htim)
 {
-    FDCAN_FilterTypeDef sFilterConfig;
-
-    // Фильтр 0: Принимаем ID 0x003 (RPM данные)
-    sFilterConfig.IdType = FDCAN_STANDARD_ID;
-    sFilterConfig.FilterIndex = 0;
-    sFilterConfig.FilterType = FDCAN_FILTER_MASK;
-    sFilterConfig.FilterConfig = FDCAN_FILTER_TO_RXFIFO0;
-    sFilterConfig.FilterID1 = CAN_SPECIAL_ID;  // ID 0x003
-    sFilterConfig.FilterID2 = 0x07FF;          // Маска
-    
-    if (HAL_FDCAN_ConfigFilter(&hfdcan1, &sFilterConfig) != HAL_OK) {
-        Error_Handler();
+    if (htim->Instance == TIM6) {
+        /*my_printf("100 ms \n");*/
+        ms100Flag = 1;
+        ms100Flag_2 = 1;
     }
-    
-    // Фильтр 1: Принимаем ID 0x004 (команды управления)
-    sFilterConfig.FilterIndex = 1;
-    sFilterConfig.FilterID1 = CAN_CMD_ID;      // ID 0x004
-    sFilterConfig.FilterID2 = 0x07FF;          // Маска
-    
-    if (HAL_FDCAN_ConfigFilter(&hfdcan1, &sFilterConfig) != HAL_OK) {
-        Error_Handler();
+    if (htim->Instance == TIM8) {
+        update_led_indication();  // ← Вызываем здесь
     }
 
-    // Глобальный фильтр
-    if (HAL_FDCAN_ConfigGlobalFilter(&hfdcan1, 
-        FDCAN_REJECT,          // Стандартные ID не прошедшие фильтр
-        FDCAN_REJECT,          // Расширенные ID не прошедшие фильтр
-        FDCAN_FILTER_REMOTE,   // Удаленные фреймы с фильтром
-        FDCAN_FILTER_REMOTE)   // Удаленные фреймы без фильтра
-        != HAL_OK) {
-        Error_Handler();
+    if (htim->Instance == TIM1) {
+        HAL_GPIO_TogglePin(GPIOA, tim1_out_Pin);
     }
-
-    // Активируем прерывание
-    if (HAL_FDCAN_ActivateNotification(&hfdcan1, 
-        FDCAN_IT_RX_FIFO0_NEW_MESSAGE, 0) != HAL_OK) {
-        Error_Handler();
+    else if (htim->Instance == TIM3) {
+        HAL_GPIO_TogglePin(GPIOA, tim3_out_Pin);
     }
-    
-    // Запускаем FDCAN
-    if (HAL_FDCAN_Start(&hfdcan1) != HAL_OK) {
-        Error_Handler();
+    else if (htim->Instance == TIM4) {
+        HAL_GPIO_TogglePin(GPIOB, tim4_out_Pin);
     }
-    
-    my_printf("CAN Filter: ID 0x003 & 0x004\n");
 }
 
-// FDCAN1 Callback
-void HAL_FDCAN_RxFifo0Callback(FDCAN_HandleTypeDef *hfdcan, uint32_t RxFifo0ITs)
-{
-    if ((RxFifo0ITs & FDCAN_IT_RX_FIFO0_NEW_MESSAGE) != RESET) {
-        if (HAL_FDCAN_GetRxMessage(hfdcan, FDCAN_RX_FIFO0, &RxHeader1, canRX) != HAL_OK) {
-            Error_Handler();
-        }
-        else {
-            if (RxHeader1.Identifier == CAN_SPECIAL_ID) {
-                // RPM данные
-                freshCanMsg = 1;
-            }
-            else if (RxHeader1.Identifier == CAN_CMD_ID) {  // 0x004
-                // Команды управления
-                memcpy(canCmdData, canRX, 8);
-                freshCanCmd = 1;  // ТОЛЬКО флаг, обработка в основном цикле
-                // НЕ вызывать process_can_command здесь!
-            }
-            else {
-                my_printf("wrongID: %#x \n\r", RxHeader1.Identifier);
-            }
-        }
-    }
-}
 
 /* USER CODE END 4 */
 

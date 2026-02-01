@@ -65,6 +65,10 @@ typedef struct {
     // Для MODE_BOOT LED (одна вспышка 1500ms)
     uint8_t led_boot_flashed;          // 1 = LED уже включали в BOOT режиме
     uint32_t led_boot_start_time;      // Время когда включили LED в BOOT
+
+    // Legacy логика индикации
+    uint8_t can_activity_flag;    // Флаг активности CAN (для LED)
+    uint32_t can_activity_time;   // Время последней активности
     
 } system_state_t;
 
