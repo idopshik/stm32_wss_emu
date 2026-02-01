@@ -41,6 +41,9 @@
 #define numRL 2
 #define numRR 3
 
+
+extern system_state_t g_system_state;
+
 FDCAN_TxHeaderTypeDef TxHeader1;
 FDCAN_RxHeaderTypeDef RxHeader1;
 
@@ -741,10 +744,10 @@ int main(void)
     /* USER CODE BEGIN WHILE */
     
     // Инициализация структур колес (старый код, но используем обновленную структуру)
-    whl_chnl fl_whl_s = {numFL, &htim1, 0, 24, 0, 0, 0, 0, 0, 0, 0, 0};
-    whl_chnl fr_whl_s = {numFR, &htim2, 0, 12, 0, 0, 0, 0, 0, 0, 0, 0};
-    whl_chnl rl_whl_s = {numRL, &htim3, 0, 24, 0, 0, 0, 0, 0, 0, 0, 0};
-    whl_chnl rr_whl_s = {numRR, &htim4, 0, 24, 0, 0, 0, 0, 0, 0, 0, 0};
+    whl_chnl fl_whl_s = {numFL, &htim1, 0, 24, 0, 0, 0, 0, 0, 0};
+    whl_chnl fr_whl_s = {numFR, &htim2, 0, 12, 0, 0, 0, 0, 0, 0};
+    whl_chnl rl_whl_s = {numRL, &htim3, 0, 24, 0, 0, 0, 0, 0, 0};
+    whl_chnl rr_whl_s = {numRR, &htim4, 0, 24, 0, 0, 0, 0, 0, 0};
 
     whl_arr[numFL] = &fl_whl_s;
     whl_arr[numFR] = &fr_whl_s;
@@ -1447,39 +1450,6 @@ void exit_hi_z_mode(void)
     // Таймеры включатся при первом RPM сообщении
 }
 
-// Обработка команд из CAN
-void process_can_command(uint8_t cmd, uint8_t *data)
-{
-    switch(cmd) {
-        case 0x01:  // Войти в Hi-Z
-            enter_hi_z_mode();
-            break;
-            
-        case 0x02:  // Выйти из Hi-Z
-            exit_hi_z_mode();
-            break;
-            
-        case 0x03:  // Тестовый режим - установить фиксированные RPM
-            if(sys_state.current_mode != MODE_HI_Z) {
-                int rpm = (data[1] << 8) | data[2];
-                set_new_speeds(rpm, rpm, rpm, rpm, whl_arr);
-                my_printf("[TEST] Fixed RPM: %d\n", rpm);
-            }
-            break;
-            
-        case 0x04:  // Включить/выключить каналы
-            {
-                uint8_t mask = data[1];
-                sys_state.channel_enabled = mask;
-                my_printf("[CMD] Channel mask: 0x%02X\n", mask);
-            }
-            break;
-            
-        default:
-            my_printf("[CMD] Unknown: 0x%02X\n", cmd);
-            break;
-    }
-}
 
 static void CANFD1_Set_Filtes(void)
 {
