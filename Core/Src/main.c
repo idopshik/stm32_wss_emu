@@ -56,6 +56,8 @@ volatile uint8_t can_tx_status_pending = 0;
 volatile uint8_t can_tx_error_pending = 0;
 uint8_t can_tx_error_code = 0;            
 
+    
+extern uint32_t can_callback_count;  // ← ПРОСТО extern, БЕЗ static!
 
 /* USER CODE END PTD */
 
@@ -229,8 +231,12 @@ int main(void)
   MX_USART1_UART_Init();
   /* USER CODE BEGIN 2 */
 
+  // ← ДОБАВЬ ПРОВЕРКУ:
+  my_printf("[MAIN] After MX_FDCAN1_Init, before can_handler_init\n");
     can_handler_init();
 
+  // ← ДОБАВЬ ПРОВЕРКУ:
+  my_printf("[MAIN] can_handler_init() completed\n");
 
     // Start four timers (как в старом коде)
     HAL_TIM_Base_Start_IT(&htim1);
@@ -275,8 +281,40 @@ int main(void)
 
     /* Infinite loop */
     /* USER CODE BEGIN WHILE */
-    
+
+  // ← ДОБАВЬ ПРОВЕРКУ:
+  my_printf("[MAIN] All timers started, entering main loop\n");
+static uint32_t last_diag_time = 0;
 while (1) {
+
+
+
+
+if(HAL_GetTick() - last_diag_time > 3000) {
+    last_diag_time = HAL_GetTick();
+    
+    static uint32_t last_callback_count = 0;
+    if(can_callback_count != last_callback_count) {
+        my_printf("[DIAG] Callback called! Count: %lu\n", can_callback_count);
+        last_callback_count = can_callback_count;
+    } else {
+        my_printf("[DIAG] ⚠️  Callback NOT called!\n");
+    }
+    
+    my_printf("[DIAG] freshCanMsg=%d, freshCanCmd=%d\n", freshCanMsg, freshCanCmd);
+    my_printf("[DIAG] Mode=%d\n", g_system_state.current_mode);
+}
+
+
+
+
+
+
+
+
+
+
+
     // Обработка RPM данных
     can_process_in_main();
     
