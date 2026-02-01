@@ -15,9 +15,8 @@
 #include <stdarg.h>
 #include "stm32g4xx_hal.h"
 
-#ifndef APB1_CLK
+
 #define APB1_CLK 150000000
-#endif
 
 // Объявление внешних переменных из main.c
 extern FDCAN_HandleTypeDef hfdcan1;  // ← ВАЖНО: объявляем hfdcan1
@@ -38,17 +37,13 @@ static void handle_hi_z_exit_if_needed(void)
 {
     // Если активен Hi-Z режим - выходим из него
     if(g_system_state.hi_impedance_active) {
-#ifdef DEBUG_CAN_COMMANDS
-        printf("[CAN] Exiting Hi-Z mode (was active)\n");
-#endif
+        my_printf("[CAN] Exiting Hi-Z mode (was active)\n");
         exit_hi_impedance_mode();
     }
     
     // Если есть ожидающий Hi-Z вход - отменяем его
     if(g_system_state.pending_hi_z) {
-#ifdef DEBUG_CAN_COMMANDS
-        printf("[CAN] Cancelling pending Hi-Z\n");
-#endif
+        my_printf("[CAN] Cancelling pending Hi-Z\n");
         g_system_state.pending_hi_z = 0;
     }
 }
@@ -58,7 +53,7 @@ static void handle_hi_z_exit_if_needed(void)
  */
 static void update_channel_mask(uint8_t mask)
 {
-    /* printf("[CAN] Updating channel mask: 0x%02X -> 0x%02X\n", g_system_state.channel_mask, mask); */
+    /* my_printf("[CAN] Updating channel mask: 0x%02X -> 0x%02X\n", g_system_state.channel_mask, mask); */
     
     g_system_state.channel_mask = mask;
     
@@ -69,8 +64,8 @@ static void update_channel_mask(uint8_t mask)
         }
     }
 
-    /* printf("[CAN] new channel mask: 0x%02X -> 0x%02X\n", g_system_state.channel_mask, mask); */
-    printf("seems like bug was in print!");
+    /* my_printf("[CAN] new channel mask: 0x%02X -> 0x%02X\n", g_system_state.channel_mask, mask); */
+    my_printf("seems like bug was in print!");
 
 }
 
@@ -80,18 +75,18 @@ static void update_channel_mask(uint8_t mask)
 
 void process_can_command(uint8_t* data)
 {
+    my_printf("--> ! <--\n");
+
     if(data == NULL) {
-#ifdef DEBUG_CAN_ERROR
-        printf("[CAN ERROR] NULL data pointer\n");
-#endif
+        my_printf("[CAN ERROR] NULL data pointer\n");
         return;
     }
     
     uint8_t command = data[0];
+
+    my_printf("[CAN] Processing command: 0x%02X\n", command);
     
-#ifdef DEBUG_CAN_COMMANDS
-    printf("[CAN] Processing command: 0x%02X\n", command);
-#endif
+    my_printf("[CAN] Processing command: 0x%02X\n", command);
     
     switch(command) {
         
@@ -99,9 +94,7 @@ void process_can_command(uint8_t* data)
         case CMD_DISABLE_OUTPUT: {
             uint8_t channel_mask = data[1];
             
-#ifdef DEBUG_CAN_COMMANDS
-            printf("[CAN] DISABLE_OUTPUT, mask: 0x%02X\n", channel_mask);
-#endif
+            my_printf("[CAN] DISABLE_OUTPUT, mask: 0x%02X\n", channel_mask);
             
             handle_hi_z_exit_if_needed();
             
@@ -126,7 +119,7 @@ void process_can_command(uint8_t* data)
         case CMD_SET_RPM_MODE: {
             uint8_t channel_mask = data[1];
 
-            printf("[CAN] RPM_MODE, mask: 0x%02X\n", channel_mask);
+            my_printf("[CAN] RPM_MODE, mask: 0x%02X\n", channel_mask);
 
             handle_hi_z_exit_if_needed();
             
@@ -159,11 +152,11 @@ void process_can_command(uint8_t* data)
             
             float freq_hz = freq_mhz / 1000.0f;
             
-            printf("[CAN] FIXED_FREQ: %.3f Hz, mask: 0x%02X\n", freq_hz, channel_mask);
+            my_printf("[CAN] FIXED_FREQ: %.3f Hz, mask: 0x%02X\n", freq_hz, channel_mask);
             
             // Проверка диапазона
             if(freq_mhz < 1000 || freq_mhz > 4500000) {
-                printf("[CAN ERROR] Frequency out of range: %lu mHz\n", freq_mhz);
+                my_printf("[CAN ERROR] Frequency out of range: %lu mHz\n", freq_mhz);
                 can_tx_error_code = 0x02;
                 can_tx_error_pending = 1;
                 break;
@@ -176,7 +169,7 @@ void process_can_command(uint8_t* data)
             
             if(channel_mask == 0x02) {
                 // ONLY_FR режим
-                printf("[CAN] ONLY_FR mode (32-bit TIM2)\n");
+                my_printf("[CAN] ONLY_FR mode (32-bit TIM2)\n");
                 uint16_t psc;
                 uint32_t arr_32bit;
                 calculate_optimal_psc_arr_32bit(freq_hz, &psc, &arr_32bit);
@@ -208,16 +201,16 @@ void process_can_command(uint8_t* data)
                 update_channel_mask(0x02);
             }
             else if(channel_mask == 0x0F) {
-                printf("[CAN] ALL_FOUR mode (16-bit all timers)\n");
+                my_printf("[CAN] ALL_FOUR mode (16-bit all timers)\n");
                 
                 uint16_t psc, arr_16bit;
                 calculate_optimal_psc_arr_16bit(freq_hz, &psc, &arr_16bit);
-                printf("calculated\n");
+                my_printf("calculated\n");
                 
                 set_all_channels_active(1);
-                printf("all set\n");
+                my_printf("all set\n");
                 update_channel_mask(0x0F);
-                printf("updated\n");
+                my_printf("updated\n");
                 
                 // Настраиваем TIM1, TIM3, TIM4 - 16-битные
                 TIM_TypeDef* timers_16bit[3] = {TIM1, TIM3, TIM4};
@@ -231,66 +224,64 @@ void process_can_command(uint8_t* data)
                 }
 
                 // TIM2 отдельно - 32-битный (ТОЛЬКО ОДНА НАСТРОЙКА!)
-                printf("[FIXED_FREQ] Configuring TIM2 (32-bit)...\n");
+                my_printf("[FIXED_FREQ] Configuring TIM2 (32-bit)...\n");
 
                 TIM2->DIER &= ~TIM_DIER_UIE;  // Отключить Update Interrupt, иначе виснет
 
                 uint16_t psc_32bit;
                 uint32_t arr_32bit;
                 calculate_optimal_psc_arr_32bit(freq_hz, &psc_32bit, &arr_32bit);
-                printf("[FIXED_FREQ] TIM2 params: PSC=%lu, ARR=%lu\n", (uint32_t)psc_32bit, arr_32bit);
+                my_printf("[FIXED_FREQ] TIM2 params: PSC=%lu, ARR=%lu\n", (uint32_t)psc_32bit, arr_32bit);
 
-                printf("[TIM2 DIAG] Before config:\n");
-                printf("  CR1: 0x%04lX, CEN=%d\n", (uint32_t)TIM2->CR1, (TIM2->CR1 & TIM_CR1_CEN) ? 1 : 0);
-                printf("  PSC: %lu\n", (uint32_t)TIM2->PSC);
-                printf("  ARR: %lu\n", TIM2->ARR);
-                printf("  CCR1: %lu\n", TIM2->CCR1);
-                printf("  CCER: 0x%04lX\n", (uint32_t)TIM2->CCER);
-                printf("  DIER: 0x%04lX\n", (uint32_t)TIM2->DIER);
+                my_printf("[TIM2 DIAG] Before config:\n");
+                my_printf("  CR1: 0x%04lX, CEN=%d\n", (uint32_t)TIM2->CR1, (TIM2->CR1 & TIM_CR1_CEN) ? 1 : 0);
+                my_printf("  PSC: %lu\n", (uint32_t)TIM2->PSC);
+                my_printf("  ARR: %lu\n", TIM2->ARR);
+                my_printf("  CCR1: %lu\n", TIM2->CCR1);
+                my_printf("  CCER: 0x%04lX\n", (uint32_t)TIM2->CCER);
+                my_printf("  DIER: 0x%04lX\n", (uint32_t)TIM2->DIER);
 
-                printf("[FIXED_FREQ] Stopping TIM2...\n");
+                my_printf("[FIXED_FREQ] Stopping TIM2...\n");
                 TIM2->CR1 &= ~TIM_CR1_CEN;
-                printf("[FIXED_FREQ] TIM2 stopped\n");
+                my_printf("[FIXED_FREQ] TIM2 stopped\n");
 
-                printf("[FIXED_FREQ] Setting TIM2->PSC = %lu\n", (uint32_t)psc_32bit);
+                my_printf("[FIXED_FREQ] Setting TIM2->PSC = %lu\n", (uint32_t)psc_32bit);
                 TIM2->PSC = psc_32bit;
-                printf("[FIXED_FREQ] TIM2->PSC set\n");
+                my_printf("[FIXED_FREQ] TIM2->PSC set\n");
 
-                printf("[FIXED_FREQ] Setting TIM2->ARR = %lu\n", arr_32bit);
+                my_printf("[FIXED_FREQ] Setting TIM2->ARR = %lu\n", arr_32bit);
                 TIM2->ARR = arr_32bit;
-                printf("[FIXED_FREQ] TIM2->ARR set\n");
+                my_printf("[FIXED_FREQ] TIM2->ARR set\n");
 
-                printf("[FIXED_FREQ] Resetting TIM2->CNT\n");
+                my_printf("[FIXED_FREQ] Resetting TIM2->CNT\n");
                 TIM2->CNT = 0;
 
-                printf("[FIXED_FREQ] Setting TIM2 PWM duty: CCR1 = %lu\n", arr_32bit / 2);
+                my_printf("[FIXED_FREQ] Setting TIM2 PWM duty: CCR1 = %lu\n", arr_32bit / 2);
                 TIM2->CCR1 = arr_32bit / 2;
 
-                printf("[FIXED_FREQ] Enabling TIM2 PWM output (CCER)\n");
+                my_printf("[FIXED_FREQ] Enabling TIM2 PWM output (CCER)\n");
                 TIM2->CCER |= TIM_CCER_CC1E;
 
-                printf("[FIXED_FREQ] Starting TIM2...\n");
+                my_printf("[FIXED_FREQ] Starting TIM2...\n");
                 TIM2->CR1 |= TIM_CR1_CEN;
-                printf("[FIXED_FREQ] TIM2 started\n");
+                my_printf("[FIXED_FREQ] TIM2 started\n");
                 
                 // Сохраняем параметры
                 g_system_state.psc_values[1] = psc_32bit;
                 g_system_state.arr_values_32bit[1] = arr_32bit;
 
                 // Диагностика после запуска
-                printf("[TIM2 DIAG] After config:\n");
-                printf("  CR1: 0x%04lX, CEN=%d\n", (uint32_t)TIM2->CR1, (TIM2->CR1 & TIM_CR1_CEN) ? 1 : 0);
-                printf("  PSC: %lu\n", (uint32_t)TIM2->PSC);
-                printf("  ARR: %lu\n", TIM2->ARR);
-                printf("  CCR1: %lu\n", TIM2->CCR1);
-                printf("  CCER: 0x%04lX\n", (uint32_t)TIM2->CCER);
+                my_printf("[TIM2 DIAG] After config:\n");
+                my_printf("  CR1: 0x%04lX, CEN=%d\n", (uint32_t)TIM2->CR1, (TIM2->CR1 & TIM_CR1_CEN) ? 1 : 0);
+                my_printf("  PSC: %lu\n", (uint32_t)TIM2->PSC);
+                my_printf("  ARR: %lu\n", TIM2->ARR);
+                my_printf("  CCR1: %lu\n", TIM2->CCR1);
+                my_printf("  CCER: 0x%04lX\n", (uint32_t)TIM2->CCER);
                 
-                printf("done\n");
+                my_printf("done\n");
             }
             else {
-#ifdef DEBUG_CAN_ERROR
-                printf("[CAN ERROR] Unsupported channel mask: 0x%02X\n", channel_mask);
-#endif
+                my_printf("[CAN ERROR] Unsupported channel mask: 0x%02X\n", channel_mask);
                 can_tx_error_code = 0x03;
                 can_tx_error_pending = 1;
                 break;
@@ -302,17 +293,17 @@ void process_can_command(uint8_t* data)
         
         // ===== CMD 0x06: HI-IMPEDANCE MODE =====
         case CMD_SET_HI_IMPEDANCE: {
-            printf("[CAN] HI_IMPEDANCE request\n");
+            my_printf("[CAN] HI_IMPEDANCE request\n");
             
             // Проверка состояния
             if(g_system_state.hi_impedance_active) {
-                printf("[CAN] Hi-Z already active, ignoring\n");
+                my_printf("[CAN] Hi-Z already active, ignoring\n");
                 can_tx_status_pending = 1;
                 break;
             }
             
             if(g_system_state.pending_hi_z) {
-                printf("[CAN] Hi-Z already pending, ignoring\n");
+                my_printf("[CAN] Hi-Z already pending, ignoring\n");
                 can_tx_status_pending = 1;
                 break;
             }
@@ -321,13 +312,13 @@ void process_can_command(uint8_t* data)
             g_system_state.pending_hi_z = 1;
             can_tx_status_pending = 1;
             
-            printf("[CAN] Hi-Z pending flag set\n");
+            my_printf("[CAN] Hi-Z pending flag set\n");
             break;
         }
         
         // ===== CMD 0x07: STATUS REQUEST =====
         case CMD_REQUEST_STATUS: {
-            printf("[CAN] STATUS_REQUEST\n");
+            my_printf("[CAN] STATUS_REQUEST\n");
             
             can_tx_status_pending = 1;
             break;
@@ -335,9 +326,7 @@ void process_can_command(uint8_t* data)
         
         // ===== НЕИЗВЕСТНАЯ КОМАНДА =====
         default: {
-#ifdef DEBUG_CAN_ERROR
-            printf("[CAN ERROR] Unknown command: 0x%02X\n", command);
-#endif
+            my_printf("[CAN ERROR] Unknown command: 0x%02X\n", command);
             can_tx_error_code = 0x01;
             can_tx_error_pending = 1;
             break;
@@ -353,9 +342,7 @@ void process_can_command(uint8_t* data)
 
 void send_system_status(void)
 {
-#ifdef DEBUG_CAN_TX
-    printf("[CAN TX] Sending system status\n");
-#endif
+    my_printf("[CAN TX] Sending system status\n");
     
     uint8_t status_data[8] = {0};
     
@@ -400,10 +387,8 @@ void send_system_status(void)
 
 void send_can_message(uint32_t id, uint8_t* data, uint8_t length)
 {
-#ifdef DEBUG_CAN_TX
-    printf("[CAN TX] ID: 0x%03lX, Len: %d\n", id, length);
-    // или: printf("[CAN TX] ID: 0x%03X, Len: %d\n", (unsigned int)id, length);
-#endif
+    my_printf("[CAN TX] ID: 0x%03lX, Len: %d\n", id, length);
+    // или: my_printf("[CAN TX] ID: 0x%03X, Len: %d\n", (unsigned int)id, length);
     
     FDCAN_TxHeaderTypeDef TxHeader;
     
@@ -426,16 +411,12 @@ void send_can_message(uint32_t id, uint8_t* data, uint8_t length)
 
 void calculate_optimal_psc_arr_32bit(float freq_hz, uint16_t *psc, uint32_t *arr)
 {
-#ifdef DEBUG_CALC
-    printf("[CALC_32BIT] Start: %.3f Hz\n", freq_hz);
-#endif
+    my_printf("[CALC_32BIT] Start: %.3f Hz\n", freq_hz);
     
     if(freq_hz <= 0 || freq_hz > APB1_CLK) {
         *psc = 0;
         *arr = 1;
-#ifdef DEBUG_CALC
-        printf("[CALC_32BIT] ERROR: Invalid frequency\n");
-#endif
+        my_printf("[CALC_32BIT] ERROR: Invalid frequency\n");
         return;
     }
     
@@ -466,12 +447,10 @@ void calculate_optimal_psc_arr_32bit(float freq_hz, uint16_t *psc, uint32_t *arr
     *psc = best_psc;
     *arr = best_arr;
     
-#ifdef DEBUG_CALC
     float actual_freq = (float)APB1_CLK / ((best_psc + 1) * (best_arr + 1));
     float error_pct = fabsf(actual_freq - freq_hz) / freq_hz * 100.0f;
-    printf("[CALC_32BIT] Result: PSC=%u, ARR=%lu (%.3f Hz, error: %.4f%%)\n",
+    my_printf("[CALC_32BIT] Result: PSC=%u, ARR=%lu (%.3f Hz, error: %.4f%%)\n",
            best_psc, best_arr, actual_freq, error_pct);
-#endif
 }
 
 // ============================================
@@ -480,16 +459,12 @@ void calculate_optimal_psc_arr_32bit(float freq_hz, uint16_t *psc, uint32_t *arr
 
 void calculate_optimal_psc_arr_16bit(float freq_hz, uint16_t *psc, uint16_t *arr)
 {
-#ifdef DEBUG_CALC
-    printf("[CALC_16BIT] Start: %.3f Hz\n", freq_hz);
-#endif
+    my_printf("[CALC_16BIT] Start: %.3f Hz\n", freq_hz);
     
     if(freq_hz <= 0 || freq_hz > APB1_CLK) {
         *psc = 0;
         *arr = 1;
-#ifdef DEBUG_CALC
-        printf("[CALC_16BIT] ERROR: Invalid frequency\n");
-#endif
+        my_printf("[CALC_16BIT] ERROR: Invalid frequency\n");
         return;
     }
     
@@ -520,12 +495,10 @@ void calculate_optimal_psc_arr_16bit(float freq_hz, uint16_t *psc, uint16_t *arr
     *psc = best_psc;
     *arr = best_arr;
     
-#ifdef DEBUG_CALC
     float actual_freq = (float)APB1_CLK / ((best_psc + 1) * (best_arr + 1));
     float error_pct = fabsf(actual_freq - freq_hz) / freq_hz * 100.0f;
-    printf("[CALC_16BIT] Result: PSC=%u, ARR=%u (%.3f Hz, error: %.4f%%)\n",
+    my_printf("[CALC_16BIT] Result: PSC=%u, ARR=%u (%.3f Hz, error: %.4f%%)\n",
            best_psc, best_arr, actual_freq, error_pct);
-#endif
 }
 
 // ============================================
@@ -534,9 +507,7 @@ void calculate_optimal_psc_arr_16bit(float freq_hz, uint16_t *psc, uint16_t *arr
 
 void send_error_response(uint8_t error_code)
 {
-#ifdef DEBUG_CAN_TX
-    printf("[CAN TX ERROR] Sending error code: 0x%02X\n", error_code);
-#endif
+    my_printf("[CAN TX ERROR] Sending error code: 0x%02X\n", error_code);
     
     uint8_t error_data[8] = {0};
     error_data[0] = 0xFF;

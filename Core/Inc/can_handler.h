@@ -31,8 +31,8 @@ void can_process_in_main(void);
 void HAL_FDCAN_RxFifo0Callback(FDCAN_HandleTypeDef *hfdcan, uint32_t RxFifo0ITs);
 
 
-#define DEBUG_CAN          // Основная диагностика
-#define DEBUG_CAN_DETAIL   // Детальная диагностика (много вывода)
+// #define DEBUG_CAN          // Основная диагностика
+// #define DEBUG_CAN_DETAIL   // Детальная диагностика (много вывода)
 
 #endif
 

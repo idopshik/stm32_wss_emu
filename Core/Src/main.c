@@ -37,8 +37,6 @@
 /* Private typedef -----------------------------------------------------------*/
 /* USER CODE BEGIN PTD */
 
-#define CAN_SPECIAL_ID 0x003
-#define CAN_CMD_ID     0x004      // Новый ID для команд
 #define numFL 0
 #define numFR 1
 #define numRL 2
@@ -56,8 +54,7 @@ volatile uint8_t can_tx_status_pending = 0;
 volatile uint8_t can_tx_error_pending = 0;
 uint8_t can_tx_error_code = 0;            
 
-    
-extern uint32_t can_callback_count;  // ← ПРОСТО extern, БЕЗ static!
+
 
 /* USER CODE END PTD */
 
@@ -167,27 +164,13 @@ void my_printf(const char *fmt, ...)  // custom printf() function
     va_end(argp);
 }
 
-void print_test(void)
-{
-    printf("\r\nRTOS\r\nCharacters: %c %c\r\n", 'a', 65);
-    printf("Decimals: %d %ld\r\n", 1977, 650000L);
-    printf("Preceding with blanks: %10d\r\n", 1977);
-    printf("Preceding with zeros: %010d\r\n", 1977);
-    printf("Some different radices: %d %x %o %#x %#o\r\n", 100, 100, 100, 100, 100);
-    printf("floats: %4.2f %+.0e %E\r\n", 3.1416, 3.1416, 3.1416);
-    printf("Width trick: %*d\r\n", 5, 10);
-    printf("%s\r\n\r\n", "A string");
 
-    my_printf("\r\nRTOS\r\nCharacters: %c %c\r\n", 'a', 65);
-    my_printf("Decimals: %d %ld\r\n", 1977, 650000L);
-    my_printf("Preceding with blanks: %10d\r\n", 1977);
-    my_printf("Preceding with zeros: %010d\r\n", 1977);
-    my_printf("Some different radices: %d %x %o %#x %#o\r\n", 100, 100, 100, 100, 100);
-    my_printf("floats: %4.2f %+.0e %E\r\n", 3.1416, 3.1416, 3.1416);
-    my_printf("Width trick: %*d\r\n", 5, 10);
-    my_printf("%s\r\n\r\n", "A string");
-}
+    whl_chnl fl_whl_s = {numFL, &htim1, 0, 24, 0, 0, 0};
+    whl_chnl fr_whl_s = {numFR, &htim2, 0, 12, 0, 0, 0};
+    whl_chnl rl_whl_s = {numRL, &htim3, 0, 24, 0, 0, 0};
+    whl_chnl rr_whl_s = {numRR, &htim4, 0, 24, 0, 0, 0};
 
+    whl_chnl *whl_arr[4] = {NULL};  // Глобальный массив
 
 
 /* USER CODE END 0 */
@@ -231,12 +214,8 @@ int main(void)
   MX_USART1_UART_Init();
   /* USER CODE BEGIN 2 */
 
-  // ← ДОБАВЬ ПРОВЕРКУ:
-  my_printf("[MAIN] After MX_FDCAN1_Init, before can_handler_init\n");
     can_handler_init();
 
-  // ← ДОБАВЬ ПРОВЕРКУ:
-  my_printf("[MAIN] can_handler_init() completed\n");
 
     // Start four timers (как в старом коде)
     HAL_TIM_Base_Start_IT(&htim1);
@@ -261,15 +240,13 @@ int main(void)
 
     HAL_GPIO_WritePin(GPIOA, EXT_LED_Pin, GPIO_PIN_SET);
 
-    whl_chnl fl_whl_s = {numFL, &htim1, 0, 24, 0, 0, 0};
-    whl_chnl fr_whl_s = {numFR, &htim2, 0, 12, 0, 0, 0};
-    whl_chnl rl_whl_s = {numRL, &htim3, 0, 24, 0, 0, 0};
-    whl_chnl rr_whl_s = {numRR, &htim4, 0, 24, 0, 0, 0};
-
+    // ПРОСТО ПРИСВОЙ УКАЗАТЕЛИ:
     whl_arr[numFL] = &fl_whl_s;
     whl_arr[numFR] = &fr_whl_s;
     whl_arr[numRL] = &rl_whl_s;
     whl_arr[numRR] = &rr_whl_s;
+    
+    set_new_speeds(0, 0, 0, 0, whl_arr);
 
     // Вызов функции
    set_new_speeds(0, 0, 0, 0, whl_arr);
@@ -282,49 +259,11 @@ int main(void)
     /* Infinite loop */
     /* USER CODE BEGIN WHILE */
 
-  // ← ДОБАВЬ ПРОВЕРКУ:
-  my_printf("[MAIN] All timers started, entering main loop\n");
-static uint32_t last_diag_time = 0;
 while (1) {
-
-
-
-
-if(HAL_GetTick() - last_diag_time > 3000) {
-    last_diag_time = HAL_GetTick();
-    
-    static uint32_t last_callback_count = 0;
-    if(can_callback_count != last_callback_count) {
-        my_printf("[DIAG] Callback called! Count: %lu\n", can_callback_count);
-        last_callback_count = can_callback_count;
-    } else {
-        my_printf("[DIAG] ⚠️  Callback NOT called!\n");
-    }
-    
-    my_printf("[DIAG] freshCanMsg=%d, freshCanCmd=%d\n", freshCanMsg, freshCanCmd);
-    my_printf("[DIAG] Mode=%d\n", g_system_state.current_mode);
-}
-
-
-
-
-
-
-
-
-
 
 
     // Обработка RPM данных
     can_process_in_main();
-    
-    // Проверка таймаутов - используем ПРАВИЛЬНЫЕ имена режимов
-    if(g_system_state.current_mode == MODE_RPM_DYNAMIC) {  // ← ИСПРАВИТЬ
-        if(HAL_GetTick() - g_system_state.last_can_command_time > 5000) {
-            // Автоматический переход в Hi-Z через 5 секунд
-            enter_hi_impedance_mode();  // ← Эта функция из system_modes.c
-        }
-    }
     
     // Старая логика мигания светодиодов (100 мс)
     if (ms100Flag > 0) {

@@ -138,6 +138,8 @@ extern volatile uint8_t can_tx_status_pending;
 extern volatile uint8_t can_tx_error_pending;
 extern uint8_t can_tx_error_code;
 
+extern void my_printf(const char *fmt, ...);
+
 // ============================================
 // ФУНКЦИИ
 // ============================================

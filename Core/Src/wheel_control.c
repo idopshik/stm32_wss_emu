@@ -8,7 +8,6 @@ extern TIM_HandleTypeDef htim2;
 extern TIM_HandleTypeDef htim3;
 extern TIM_HandleTypeDef htim4;
 
-whl_chnl *whl_arr[4] = {NULL};
 
 
 void wheel_control_init(void){
@@ -30,6 +29,9 @@ void set_new_speeds(int vFLrpm, int vFRrpm, int vRLrpm, int vRRrpm, whl_chnl *wh
     // 32-bit timers first
     //
 
+    my_printf("enering new speed settings\n");
+    my_printf("but not this time! return! \n");
+    return 0;
     int arr_with_calculations[4] = {300, 300, 300, 300};
 
     ////////////    TIMER1 -  FL  ///////////////
@@ -331,6 +333,9 @@ void set_new_speeds(int vFLrpm, int vFRrpm, int vRLrpm, int vRRrpm, whl_chnl *wh
             whl_arr[numRR]->prev_speed = vRRrpm;
         }
     }
+
+
+    my_printf("exiting new speed settings, all set\n");
 }
 
 
