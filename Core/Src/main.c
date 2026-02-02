@@ -177,7 +177,7 @@ int main(void)
   /* MCU Configuration--------------------------------------------------------*/
 
   /* Reset of all peripherals, Initializes the Flash interface and the Systick. */
-  HAL_Init();
+ HAL_Init();
 
   /* USER CODE BEGIN Init */
 
@@ -299,17 +299,17 @@ while (1) {
 
 
     // ← ДОБАВИТЬ: Включение прерываний ПОСЛЕ exit_hi_impedance_mode()  НЕ ПОМОГАЕТ ВИСНЕТ ВСЁ РАВНО.
-    static uint8_t nvic_enabled = 0;
-    if (!nvic_enabled && !g_system_state.hi_impedance_active && 
-        g_system_state.current_mode == MODE_RPM_DYNAMIC) {
-        my_printf("[MAIN] Enabling NVIC interrupts now\n");
-        NVIC_EnableIRQ(TIM1_UP_TIM16_IRQn);
-        NVIC_EnableIRQ(TIM2_IRQn);
-        NVIC_EnableIRQ(TIM3_IRQn);
-        NVIC_EnableIRQ(TIM4_IRQn);
-        nvic_enabled = 1;
-        my_printf("[MAIN] NVIC enabled\n");
-    }
+    /* static uint8_t nvic_enabled = 0; */
+    /* if (!nvic_enabled && !g_system_state.hi_impedance_active &&  */
+        /* g_system_state.current_mode == MODE_RPM_DYNAMIC) { */
+        /* my_printf("[MAIN] Enabling NVIC interrupts now\n"); */
+        /* NVIC_EnableIRQ(TIM1_UP_TIM16_IRQn); */
+        /* NVIC_EnableIRQ(TIM2_IRQn); */
+        /* NVIC_EnableIRQ(TIM3_IRQn); */
+        /* NVIC_EnableIRQ(TIM4_IRQn); */
+        /* nvic_enabled = 1; */
+        /* my_printf("[MAIN] NVIC enabled\n"); */
+    /* } */
 
 
     

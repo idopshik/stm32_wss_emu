@@ -105,29 +105,29 @@ void HAL_FDCAN_RxFifo0Callback(FDCAN_HandleTypeDef *hfdcan, uint32_t RxFifo0ITs)
     __HAL_FDCAN_CLEAR_FLAG(hfdcan, FDCAN_FLAG_RX_FIFO0_NEW_MESSAGE);
     
     if ((RxFifo0ITs & FDCAN_IT_RX_FIFO0_NEW_MESSAGE) != RESET) {
-        my_printf("[CAN RX] Callback triggered\n");
+        /* printf("[CAN RX] Callback triggered\n"); */
         
         // Проверить уровень FIFO
         uint8_t fifoLevel = HAL_FDCAN_GetRxFifoFillLevel(hfdcan, FDCAN_RX_FIFO0);
-        my_printf("[CAN RX] FIFO level: %u\n", fifoLevel);
+        /* printf("[CAN RX] FIFO level: %u\n", fifoLevel); */
         
         // Прочитать все сообщения из FIFO
         for (uint8_t i = 0; i < fifoLevel; i++) {
             if (HAL_FDCAN_GetRxMessage(hfdcan, FDCAN_RX_FIFO0, &RxHeader1, canRX) != HAL_OK) {
-                my_printf("[CAN RX] Error reading message\n");
+                /* printf("[CAN RX] Error reading message\n"); */
                 break;
             }
             
-            my_printf("[CAN RX] ID: 0x%03lX\n", RxHeader1.Identifier);
+            printf("[CAN RX] ID: 0x%03lX\n", RxHeader1.Identifier);
             
             if (RxHeader1.Identifier == CAN_SPECIAL_ID) {
                 newRPMmessage = 1;
-                my_printf("[CAN RX] RPM message flagged\n");
+                /* printf("[CAN RX] RPM message flagged\n"); */
             }
             else if (RxHeader1.Identifier == CAN_CMD_ID) {
                 memcpy(canCmdData, canRX, 8);
                 freshCanCmd = 1;
-                my_printf("[CAN RX] Command flagged: 0x%02X\n", canCmdData[0]);
+                /* printf("[CAN RX] Command flagged: 0x%02X\n", canCmdData[0]); */
             }
         }
     }
