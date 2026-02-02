@@ -76,7 +76,7 @@ if (newRPMmessage == 1) {
         
         set_new_speeds(vFLrpm, vFRrpm, vRLrpm, vRRrpm);
 
-        g_system_state.rpm_mode_active = 1;  // ← Флаг что данные приходят
+        g_system_state.rpm_signal_active = 1;
         g_system_state.led_last_toggle_time = HAL_GetTick();
         
 }

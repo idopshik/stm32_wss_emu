@@ -118,12 +118,12 @@ void wheel_control_init(void)
 
 void set_new_speeds(int vFLrpm, int vFRrpm, int vRLrpm, int vRRrpm)
 {
-    my_printf("settins speeed ...\n");
+    /* my_printf("settins speeed ...\n"); */
 
     // Проверка инициализации
     if (whl_arr[0] == NULL || whl_arr[1] == NULL || 
         whl_arr[2] == NULL || whl_arr[3] == NULL) {
-        my_printf("ERROR: Wheel array not initialized! Calling init...\n");
+        printf("ERROR: Wheel array not initialized! Calling init...\n");
         wheel_control_init();
     }
     

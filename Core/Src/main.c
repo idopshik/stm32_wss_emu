@@ -289,7 +289,7 @@ while (1) {
     }
 
 
-    // Индикация режимов (зелёный LED по логике режима)
+    // ✅ LED INDICATION BY MODE
     update_system_indicators();
 
 
@@ -799,7 +799,7 @@ void update_led_indication(void)
 {
     if(g_system_state.current_mode == MODE_RPM_DYNAMIC) {
         if(HAL_GetTick() - g_system_state.led_last_toggle_time > 500) {
-            g_system_state.rpm_mode_active = 0;  // Нет данных 500ms
+            g_system_state.rpm_signal_active = 0;  // Нет данных 500ms
         }
     }
 }
