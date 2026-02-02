@@ -215,9 +215,8 @@ int main(void)
 
     HAL_TIM_OC_Start_IT(&htim2, TIM_CHANNEL_1);
 
-#ifdef DEBUG
-    printf("[ INFO ] Program start now\n");
-#endif
+    my_printf("[ INFO ] my_printf Program start now\n");
+    printf("[ INFO ] SWV: Program start now\n");
 
 
     // Инициализация системы режимов

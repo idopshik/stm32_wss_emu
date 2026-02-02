@@ -12,7 +12,7 @@
 #include "stm32g4xx_hal.h"
 #include "system_modes.h"
 
-extern void printf(const char *fmt, ...);
+
 
 system_state_t g_system_state;
 
