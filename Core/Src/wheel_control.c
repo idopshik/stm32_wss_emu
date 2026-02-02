@@ -1,6 +1,9 @@
 #include "wheel_control.h"
+#include "system_modes.h"  // ✅ ДОБАВИТЬ - там есть g_system_state
 #include <stdlib.h>
+#include <stdio.h>
 
+extern void my_printf(const char *fmt, ...);
 // Внешние таймеры (объявлены в main.c)
 extern TIM_HandleTypeDef htim1;
 extern TIM_HandleTypeDef htim2;
@@ -120,6 +123,7 @@ void set_new_speeds(int vFLrpm, int vFRrpm, int vRLrpm, int vRRrpm)
 {
     /* my_printf("settins speeed ...\n"); */
 
+
     // Проверка инициализации
     if (whl_arr[0] == NULL || whl_arr[1] == NULL || 
         whl_arr[2] == NULL || whl_arr[3] == NULL) {
@@ -127,6 +131,12 @@ void set_new_speeds(int vFLrpm, int vFRrpm, int vRLrpm, int vRRrpm)
         wheel_control_init();
     }
     
+    // ✅ ОБНОВЛЯЕМ МАСКУ ПО ФАКТУ АКТИВНОСТИ КАНАЛОВ
+    g_system_state.channel_mask = 0;
+    if (vFLrpm >= 0x3F) g_system_state.channel_mask |= 0x01;
+    if (vFRrpm >= 0x3F) g_system_state.channel_mask |= 0x02;
+    if (vRLrpm >= 0x3F) g_system_state.channel_mask |= 0x04;
+    if (vRRrpm >= 0x3F) g_system_state.channel_mask |= 0x08;
     int arr_with_calculations[4] = {300, 300, 300, 300};
 
     ////////////    TIMER1 -  FL  ///////////////

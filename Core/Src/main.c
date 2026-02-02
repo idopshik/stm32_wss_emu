@@ -45,8 +45,8 @@
 char ms100Flag = 0;
 
 
-volatile uint8_t can_tx_status_pending = 0;
-volatile uint8_t can_tx_error_pending = 0;
+ uint8_t can_tx_status_pending = 0;
+ uint8_t can_tx_error_pending = 0;
 uint8_t can_tx_error_code = 0;            
 
 
@@ -295,23 +295,6 @@ while (1) {
 
     // Обработка RPM данных
     can_process_in_main();
-    
-
-
-    // ← ДОБАВИТЬ: Включение прерываний ПОСЛЕ exit_hi_impedance_mode()  НЕ ПОМОГАЕТ ВИСНЕТ ВСЁ РАВНО.
-    /* static uint8_t nvic_enabled = 0; */
-    /* if (!nvic_enabled && !g_system_state.hi_impedance_active &&  */
-        /* g_system_state.current_mode == MODE_RPM_DYNAMIC) { */
-        /* my_printf("[MAIN] Enabling NVIC interrupts now\n"); */
-        /* NVIC_EnableIRQ(TIM1_UP_TIM16_IRQn); */
-        /* NVIC_EnableIRQ(TIM2_IRQn); */
-        /* NVIC_EnableIRQ(TIM3_IRQn); */
-        /* NVIC_EnableIRQ(TIM4_IRQn); */
-        /* nvic_enabled = 1; */
-        /* my_printf("[MAIN] NVIC enabled\n"); */
-    /* } */
-
-
     
     HAL_Delay(1);
 }

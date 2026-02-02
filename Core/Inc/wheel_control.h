@@ -16,7 +16,9 @@ typedef struct {
 } whl_chnl;
 
 // Глобальный массив указателей на структуры колес
+//
 extern whl_chnl *whl_arr[4];
+
 
 // Прототипы функций
 void wheel_control_init(void);

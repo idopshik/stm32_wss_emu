@@ -57,6 +57,7 @@ void process_can_command(uint8_t* data)
             // Переходим в режим
             system_switch_mode(MODE_RPM_DYNAMIC);
             
+            can_tx_status_pending = 1;  // ✅ ДОБАВИТЬ
             break;
         }
         
@@ -123,6 +124,7 @@ void process_can_command(uint8_t* data)
             // Переходим в режим
             system_switch_mode(MODE_FIXED_FREQUENCY);
             
+            can_tx_status_pending = 1;  // ✅ ДОБАВИТЬ
             break;
         }
         
@@ -132,12 +134,22 @@ void process_can_command(uint8_t* data)
             
             // Переходим в режим (GPIO будут переведены в HIGH-Z)
             system_switch_mode(MODE_EXTERNAL_SIGNAL);
+             
+            can_tx_status_pending = 1;  // ✅ ДОБАВИТЬ
+            break;
             
+            break;
+        }
+        case 0x07: {
+            my_printf("[CAN] STATUS REQUEST\n");
+            can_tx_status_pending = 1;
             break;
         }
         
         default: {
             my_printf("[CAN ERROR] Unknown command: 0x%02X\n", command);
+            can_tx_error_pending = 1;    // ✅ ДОБАВИТЬ
+            can_tx_error_code = 0x01;    // ✅ ДОБАВИТЬ (код ошибки "неизвестная команда")
             break;
         }
     }

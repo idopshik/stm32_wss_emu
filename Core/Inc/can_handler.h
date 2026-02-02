@@ -9,6 +9,14 @@
 #include <stdint.h>
 #include <string.h>
 #include <stdio.h>
+//
+// ============================================
+// ГЛОБАЛЬНЫЕ ПЕРЕМЕННЫЕ (из main.c)
+// ============================================
+
+extern  uint8_t can_tx_status_pending;
+extern  uint8_t can_tx_error_pending;
+extern uint8_t can_tx_error_code;
 
 // ========== Переменные (объявлены в can_handler.c) ==========
 extern uint8_t canRX[8];
