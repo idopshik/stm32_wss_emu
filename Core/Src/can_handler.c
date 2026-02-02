@@ -64,22 +64,22 @@ void can_handler_init(void)
 
 void can_process_in_main(void)
 {
-if (newRPMmessage == 1) {
-    newRPMmessage = 0;
-    
+    if (newRPMmessage == 1) {
+        newRPMmessage = 0;
         
-        int vFLrpm = ((uint16_t)canRX[0] << 8) | (uint16_t)canRX[1];
-        int vFRrpm = ((uint16_t)canRX[2] << 8) | (uint16_t)canRX[3];
-        int vRLrpm = ((uint16_t)canRX[4] << 8) | (uint16_t)canRX[5];
-        int vRRrpm = ((uint16_t)canRX[6] << 8) | (uint16_t)canRX[7];
-        
-        
-        set_new_speeds(vFLrpm, vFRrpm, vRLrpm, vRRrpm);
+            
+            int vFLrpm = ((uint16_t)canRX[0] << 8) | (uint16_t)canRX[1];
+            int vFRrpm = ((uint16_t)canRX[2] << 8) | (uint16_t)canRX[3];
+            int vRLrpm = ((uint16_t)canRX[4] << 8) | (uint16_t)canRX[5];
+            int vRRrpm = ((uint16_t)canRX[6] << 8) | (uint16_t)canRX[7];
+            
+            
+            set_new_speeds(vFLrpm, vFRrpm, vRLrpm, vRRrpm);
 
-        g_system_state.rpm_signal_active = 1;
-        g_system_state.led_last_toggle_time = HAL_GetTick();
-        
-}
+            g_system_state.rpm_signal_active = 1;
+            g_system_state.led_last_toggle_time = HAL_GetTick();
+            
+    }
     
     if (freshCanCmd == 1) {
         freshCanCmd = 0;

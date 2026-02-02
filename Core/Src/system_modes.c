@@ -19,6 +19,51 @@ extern TIM_HandleTypeDef htim4;
 
 system_state_t g_system_state;
 
+
+
+/**
+ * Восстанавливает GPIO как таймерные выходы после EXTERNAL режима
+ */
+static void restore_gpio_after_external(void)
+{
+    printf("[SYSTEM] Restoring GPIO...\n");
+    
+    
+    // 2. Восстановить GPIO
+    GPIO_InitTypeDef GPIO_InitStruct = {0};
+    
+    __HAL_RCC_GPIOA_CLK_ENABLE();
+    __HAL_RCC_GPIOB_CLK_ENABLE();
+    
+    // TIM2_CH1 - Output Compare (автоматический)
+    GPIO_InitStruct.Pin = GPIO_PIN_15;        // PA15
+    GPIO_InitStruct.Mode = GPIO_MODE_AF_PP;   // Alternate Function
+    GPIO_InitStruct.Pull = GPIO_NOPULL;
+    GPIO_InitStruct.Speed = GPIO_SPEED_FREQ_HIGH;
+    GPIO_InitStruct.Alternate = GPIO_AF1_TIM2; // TIM2 Channel 1
+    HAL_GPIO_Init(GPIOA, &GPIO_InitStruct);
+    
+    // TIM1 - ручное переключение в прерывании
+    GPIO_InitStruct.Pin = GPIO_PIN_8;         // PA8
+    GPIO_InitStruct.Mode = GPIO_MODE_OUTPUT_PP; // Простой выход
+    GPIO_InitStruct.Alternate = 0;            // Без AF
+    HAL_GPIO_Init(GPIOA, &GPIO_InitStruct);
+    
+    // TIM3 - ручное переключение в прерывании
+    GPIO_InitStruct.Pin = GPIO_PIN_6;         // PA6
+    GPIO_InitStruct.Mode = GPIO_MODE_OUTPUT_PP; // Простой выход
+    GPIO_InitStruct.Alternate = 0;
+    HAL_GPIO_Init(GPIOA, &GPIO_InitStruct);
+    
+    // TIM4 - ручное переключение в прерывании
+    GPIO_InitStruct.Pin = GPIO_PIN_9;         // PB9
+    GPIO_InitStruct.Mode = GPIO_MODE_OUTPUT_PP; // Простой выход
+    GPIO_InitStruct.Alternate = 0;
+    HAL_GPIO_Init(GPIOB, &GPIO_InitStruct);
+    
+    printf("[SYSTEM] GPIO restored: TIM2=AF, TIM1/3/4=OUTPUT\n");
+}
+
 void system_init_modes(void)
 {
     printf("[SYSTEM] Initializing...\n");
@@ -91,6 +136,7 @@ void system_switch_mode(operation_mode_t new_mode)
     if(old_mode == MODE_EXTERNAL_SIGNAL) {
         HAL_GPIO_WritePin(GPIOB, GPIO_PIN_10, GPIO_PIN_RESET);  // PB10 = LOW
         printf("[SYSTEM] SSR OFF\n");
+        restore_gpio_after_external();
     }
     
     g_system_state.rpm_signal_active = 0;
