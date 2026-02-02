@@ -1,13 +1,10 @@
 /**
- * system_modes.c - VERSION 4.2 (ONLY 3 MODES + SSR FOR EXTERNAL)
+ * system_modes.c - VERSION 4.3 (FIXED BOOT ISSUE)
  * 
- * Переделано с нуля:
- * - Только 3 режима: RPM, FIXED, EXTERNAL
- * - Убран DISABLED и Hi-Z (переименован в EXTERNAL)
- * - Убран pending_hi_z и автоматические переходы
- * - Система ТОЛЬКО по CAN командам
- * - LED просто: BOOT вспышка, потом по режимам
- * - SSR (PB10) включен в EXTERNAL режиме для питания оптопары
+ * Исправления:
+ * - В MODE_BOOT теперь разрешаем обработку CAN 0x003
+ * - При переходе в RPM режим правильно запускаем таймеры согласно маске
+ * - Улучшена логика обработки состояний
  */
 
 #include <stdio.h>
@@ -26,17 +23,18 @@ void system_init_modes(void)
 {
     printf("[SYSTEM] Initializing...\n");
 
-    // BOOT состояние: система ждёт CAN команды
+    // BOOT состояние: система ждёт CAN команды, но может принимать RPM данные
     g_system_state.current_mode = MODE_BOOT;
-    g_system_state.channel_mask = 0x0F;
+    g_system_state.channel_mask = 0x0F;  // Все каналы включены по умолчанию
     g_system_state.target_frequency_hz = 0;
     g_system_state.target_frequency_mhz = 0;
     
+    // Инициализация значений таймеров
     for(int i = 0; i < 4; i++) {
-        if(i == 1) {
+        if(i == 1) {  // TIM2 (FR) - 32-битный
             g_system_state.psc_values[i] = 12;
             g_system_state.arr_values_32bit[i] = 0xFFFFFFFF;
-        } else {
+        } else {      // Остальные - 16-битные
             g_system_state.psc_values[i] = 24;
             g_system_state.arr_values[i] = 59999;
         }
@@ -54,6 +52,12 @@ void system_init_modes(void)
     
     // Убедиться, что SSR выключен при загрузке
     HAL_GPIO_WritePin(GPIOB, GPIO_PIN_10, GPIO_PIN_RESET);  // PB10 = LOW
+    
+    // Важно: в BOOT режиме таймеры должны быть ОСТАНОВЛЕНЫ
+    TIM1->CR1 &= ~TIM_CR1_CEN;
+    TIM2->CR1 &= ~TIM_CR1_CEN;
+    TIM3->CR1 &= ~TIM_CR1_CEN;
+    TIM4->CR1 &= ~TIM_CR1_CEN;
     
     printf("[SYSTEM] Ready. Waiting for CAN command.\n");
 }
@@ -102,28 +106,36 @@ void system_switch_mode(operation_mode_t new_mode)
         
         case MODE_BOOT:
             printf("[SYSTEM] BOOT: LED will flash for 1500ms\n");
+            printf("[SYSTEM] NOTE: CAN 0x003 accepted but timers DISABLED\n");
+            // В BOOT режиме таймеры ОСТАНОВЛЕНЫ
+            // CAN 0x003 будет приниматься, но set_new_speeds() не включит CEN
             break;
         
         case MODE_RPM_DYNAMIC:
             printf("[SYSTEM] RPM MODE: Waiting for CAN 0x003 signals\n");
             printf("[SYSTEM] LED: ON when signal arrives, OFF after 500ms silence\n");
+            printf("[SYSTEM] Active channels: 0x%02X\n", g_system_state.channel_mask);
             
-            // Запустить таймеры согласно маске
+            // Включить только те таймеры, которые разрешены маской
             if(g_system_state.channel_mask & 0x01) {
+                printf("[SYSTEM] TIM1 (FL) ENABLED\n");
                 TIM1->CR1 |= TIM_CR1_CEN;
-                TIM1->DIER |= TIM_DIER_UIE;
+                TIM1->CCER |= TIM_CCER_CC1E;  // Включить выход
             }
             if(g_system_state.channel_mask & 0x02) {
+                printf("[SYSTEM] TIM2 (FR) ENABLED\n");
                 TIM2->CR1 |= TIM_CR1_CEN;
-                TIM2->DIER |= TIM_DIER_UIE;
+                TIM2->CCER |= TIM_CCER_CC1E;  // Включить выход
             }
             if(g_system_state.channel_mask & 0x04) {
+                printf("[SYSTEM] TIM3 (RL) ENABLED\n");
                 TIM3->CR1 |= TIM_CR1_CEN;
-                TIM3->DIER |= TIM_DIER_UIE;
+                TIM3->CCER |= TIM_CCER_CC1E;  // Включить выход
             }
             if(g_system_state.channel_mask & 0x08) {
+                printf("[SYSTEM] TIM4 (RR) ENABLED\n");
                 TIM4->CR1 |= TIM_CR1_CEN;
-                TIM4->DIER |= TIM_DIER_UIE;
+                TIM4->CCER |= TIM_CCER_CC1E;  // Включить выход
             }
             break;
         
@@ -136,6 +148,12 @@ void system_switch_mode(operation_mode_t new_mode)
             TIM2->CR1 |= TIM_CR1_CEN;
             TIM3->CR1 |= TIM_CR1_CEN;
             TIM4->CR1 |= TIM_CR1_CEN;
+            
+            // Включить выходы
+            TIM1->CCER |= TIM_CCER_CC1E;
+            TIM2->CCER |= TIM_CCER_CC1E;
+            TIM3->CCER |= TIM_CCER_CC1E;
+            TIM4->CCER |= TIM_CCER_CC1E;
             break;
         
         case MODE_EXTERNAL_SIGNAL:
@@ -247,6 +265,11 @@ void update_system_indicators(void)
             // Гаснет если нет сигнала >500ms
             if(g_system_state.rpm_signal_active) {
                 led_blink_pattern(current_time, 100);  // Мигание 100ms
+                
+                // Проверить, не было ли сигнала давно
+                if(current_time - g_system_state.led_last_toggle_time > 500) {
+                    g_system_state.rpm_signal_active = 0;
+                }
             } else {
                 HAL_GPIO_WritePin(GPIOA, GPIO_PIN_1, GPIO_PIN_SET);  // OFF
             }
@@ -274,7 +297,30 @@ void set_channel_active(uint8_t channel_num, uint8_t active)
     
     if(active) {
         g_system_state.channel_mask |= (1 << channel_num);
+        printf("[SYSTEM] Channel %d ENABLED (mask: 0x%02X)\n", 
+               channel_num, g_system_state.channel_mask);
     } else {
         g_system_state.channel_mask &= ~(1 << channel_num);
+        printf("[SYSTEM] Channel %d DISABLED (mask: 0x%02X)\n", 
+               channel_num, g_system_state.channel_mask);
     }
+}
+
+// Новая функция для проверки, должен ли канал работать в текущем режиме
+uint8_t is_channel_enabled_in_current_mode(uint8_t channel_num)
+{
+    if(channel_num >= 4) return 0;
+    
+    // В BOOT режиме каналы отключены (таймеры остановлены)
+    if(g_system_state.current_mode == MODE_BOOT) {
+        return 0;
+    }
+    
+    // В RPM режиме проверяем по маске
+    if(g_system_state.current_mode == MODE_RPM_DYNAMIC) {
+        return (g_system_state.channel_mask >> channel_num) & 0x01;
+    }
+    
+    // В других режимах (FIXED, EXTERNAL) все каналы работают/не работают по-другому
+    return 1;
 }
