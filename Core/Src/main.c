@@ -165,13 +165,6 @@ void my_printf(const char *fmt, ...)  // custom printf() function
 }
 
 
-    whl_chnl fl_whl_s = {numFL, &htim1, 0, 24, 0, 0, 0};
-    whl_chnl fr_whl_s = {numFR, &htim2, 0, 12, 0, 0, 0};
-    whl_chnl rl_whl_s = {numRL, &htim3, 0, 24, 0, 0, 0};
-    whl_chnl rr_whl_s = {numRR, &htim4, 0, 24, 0, 0, 0};
-
-    whl_chnl *whl_arr[4] = {NULL};  // Глобальный массив
-
 
 /* USER CODE END 0 */
 
@@ -234,25 +227,44 @@ int main(void)
 
     // Инициализация системы режимов
     system_init_modes();
+
+    // Инициализация управления колесами
     wheel_control_init();
 
-    // Изначально все выключено (Hi-Z режим активируется автоматом)
+    // Тест 1: Нулевые скорости
+    set_new_speeds(500, 500, 500, 500);
+    HAL_Delay(1000);
 
+    // Тест 2: Средние скорости
+    set_new_speeds(1000, 10000, 1000, 1000);
+    HAL_Delay(1000);
+
+    // Тест 3: Высокие скорости (переключение прескалера)
+    set_new_speeds(5000, 50000, 5000, 5000);
+    HAL_Delay(1000);
+
+    // Тест 4: Разные скорости
+    set_new_speeds(1000, 20000, 3000, 4000);
+    HAL_Delay(1000);
+    
+    // Теперь можем вызывать без передачи whl_arr
+    /* set_new_speeds(10, 10, 10, 10); */
+
+    // Изначально все выключено (Hi-Z режим активируется автоматом)
     HAL_GPIO_WritePin(GPIOA, EXT_LED_Pin, GPIO_PIN_SET);
 
-    // ПРОСТО ПРИСВОЙ УКАЗАТЕЛИ:
-    whl_arr[numFL] = &fl_whl_s;
-    whl_arr[numFR] = &fr_whl_s;
-    whl_arr[numRL] = &rl_whl_s;
-    whl_arr[numRR] = &rr_whl_s;
-    
-    set_new_speeds(0, 0, 0, 0, whl_arr);
-
-    // Вызов функции
-   set_new_speeds(0, 0, 0, 0, whl_arr);
 
     // Переход в Hi-Z режим после инициализации
-    enter_hi_impedance_mode();
+    /* enter_hi_impedance_mode(); */
+
+    //dirty hack
+    /* g_system_state.current_mode = MODE_RPM_DYNAMIC; */
+
+
+
+
+
+
 
     /* USER CODE END 2 */
 
@@ -262,14 +274,45 @@ int main(void)
 while (1) {
 
 
+
+    static uint32_t last_blink_time = 0;
+    uint32_t current_time = HAL_GetTick();
+    
+    // Мигание синего LED каждые 500ms
+    if (current_time - last_blink_time >= 500) {
+        last_blink_time = current_time;
+        HAL_GPIO_TogglePin(GPIOC, GPIO_PIN_6);  // PC6 - LED_Blue
+    }
+
+
+    // Индикация режимов (зелёный LED по логике режима)
+    update_system_indicators();
+
+
     // Обработка RPM данных
     can_process_in_main();
     
+
     // Старая логика мигания светодиодов (100 мс)
     if (ms100Flag > 0) {
         ms100Flag = 0;
         HAL_GPIO_TogglePin(GPIOB, Out_1_Pin);
     }
+
+    // ← ДОБАВИТЬ: Включение прерываний ПОСЛЕ exit_hi_impedance_mode()
+    static uint8_t nvic_enabled = 0;
+    if (!nvic_enabled && !g_system_state.hi_impedance_active && 
+        g_system_state.current_mode == MODE_RPM_DYNAMIC) {
+        my_printf("[MAIN] Enabling NVIC interrupts now\n");
+        NVIC_EnableIRQ(TIM1_UP_TIM16_IRQn);
+        NVIC_EnableIRQ(TIM2_IRQn);
+        NVIC_EnableIRQ(TIM3_IRQn);
+        NVIC_EnableIRQ(TIM4_IRQn);
+        nvic_enabled = 1;
+        my_printf("[MAIN] NVIC enabled\n");
+    }
+
+
     
     HAL_Delay(1);
 }
@@ -755,18 +798,12 @@ static void MX_GPIO_Init(void)
 /* USER CODE BEGIN 4 */
 void update_led_indication(void)
 {
-    if (can_active_receiving == 1) {
-        // toggle LED
-        HAL_GPIO_TogglePin(GPIOA, EXT_LED_Pin);
-        recievingcounger -= 1;
-        
-        if (recievingcounger < 1) {
-            can_active_receiving = 0;
-            HAL_GPIO_WritePin(GPIOA, EXT_LED_Pin, GPIO_PIN_SET);
+    if(g_system_state.current_mode == MODE_RPM_DYNAMIC) {
+        if(HAL_GetTick() - g_system_state.led_last_toggle_time > 500) {
+            g_system_state.rpm_mode_active = 0;  // Нет данных 500ms
         }
     }
 }
-
 void HAL_TIM_PeriodElapsedCallback(TIM_HandleTypeDef *htim)
 {
     if (htim->Instance == TIM6) {

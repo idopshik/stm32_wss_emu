@@ -376,96 +376,145 @@ void enter_hi_impedance_mode(void)
 
 void exit_hi_impedance_mode(void)
 {
-#ifdef DEBUG_SYSTEM
-    my_printf("[HI-Z] Exiting Hi-Z mode\n");
-#endif
+    my_printf("[HI-Z EXIT] 1. Enabling clocks\n");
+    __HAL_RCC_TIM1_CLK_ENABLE();
+    __HAL_RCC_TIM2_CLK_ENABLE();
+    __HAL_RCC_TIM3_CLK_ENABLE();
+    __HAL_RCC_TIM4_CLK_ENABLE();
+    my_printf("[HI-Z EXIT] 2. Clocks enabled\n");
 
-    // 1. ВКЛЮЧАЕМ ТАКТИРОВАНИЕ ВСЕХ ТАЙМЕРОВ
-    __HAL_RCC_TIM1_CLK_ENABLE();  // Для прерываний FL
-    __HAL_RCC_TIM2_CLK_ENABLE();  // Для PWM FR!
-    __HAL_RCC_TIM3_CLK_ENABLE();  // Для прерываний RR
-    __HAL_RCC_TIM4_CLK_ENABLE();  // Для прерываний RL
-
-    // 2. Выключение SSR (PB10)
     HAL_GPIO_WritePin(GPIOB, GPIO_PIN_10, GPIO_PIN_RESET);
+    my_printf("[HI-Z EXIT] 3. SSR disabled\n");
 
-    // 3. Восстановление GPIO
     GPIO_InitTypeDef GPIO_InitStruct = {0};
     GPIO_InitStruct.Pull = GPIO_NOPULL;
     GPIO_InitStruct.Speed = GPIO_SPEED_FREQ_LOW;
 
-    // ==== PA15 (TIM2_CH1) - ЕДИНСТВЕННЫЙ PWM ВЫХОД ====
     GPIO_InitStruct.Mode = GPIO_MODE_AF_PP;
     GPIO_InitStruct.Pin = GPIO_PIN_15;
-    GPIO_InitStruct.Alternate = GPIO_AF1_TIM2;  // TIM2_CH1
+    GPIO_InitStruct.Alternate = GPIO_AF1_TIM2;
     HAL_GPIO_Init(GPIOA, &GPIO_InitStruct);
-    // =================================================
 
-    // ==== ОСТАЛЬНЫЕ КОЛЁСА - GPIO ВЫХОДЫ ====
     GPIO_InitStruct.Mode = GPIO_MODE_OUTPUT_PP;
-    GPIO_InitStruct.Alternate = 0;  // Без AF
+    GPIO_InitStruct.Alternate = 0;
     
-    // PA8 - FL wheel
     GPIO_InitStruct.Pin = GPIO_PIN_8;
     HAL_GPIO_Init(GPIOA, &GPIO_InitStruct);
     HAL_GPIO_WritePin(GPIOA, GPIO_PIN_8, GPIO_PIN_RESET);
     
-    // PB9 - RL wheel  
     GPIO_InitStruct.Pin = GPIO_PIN_9;
     HAL_GPIO_Init(GPIOB, &GPIO_InitStruct);
     HAL_GPIO_WritePin(GPIOB, GPIO_PIN_9, GPIO_PIN_RESET);
     
-    // PA6 - RR wheel
     GPIO_InitStruct.Pin = GPIO_PIN_6;
     HAL_GPIO_Init(GPIOA, &GPIO_InitStruct);
     HAL_GPIO_WritePin(GPIOA, GPIO_PIN_6, GPIO_PIN_RESET);
-    // =======================================
 
-    // 4. ИНИЦИАЛИЗАЦИЯ ТАЙМЕРОВ
-    // TIM2 (PA15 - FR wheel) - ЕДИНСТВЕННЫЙ PWM
+    my_printf("[HI-Z EXIT] 9. Timer config start\n");
     TIM2->CR1 = 0;
-    TIM2->PSC = 12;  // Или что там нужно
+    TIM2->PSC = 12;
     TIM2->ARR = 65535;
     TIM2->CNT = 0;
-    TIM2->CCMR1 |= TIM_CCMR1_OC1M_1 | TIM_CCMR1_OC1M_2;  // PWM mode 1
-    TIM2->CCMR1 |= TIM_CCMR1_OC1PE;  // Preload enable
-    TIM2->CCER |= TIM_CCER_CC1E;     // Output enable
-    TIM2->CCR1 = 32767;              // 50% duty по умолчанию
+    TIM2->CCMR1 |= TIM_CCMR1_OC1M_1 | TIM_CCMR1_OC1M_2;
+    TIM2->CCMR1 |= TIM_CCMR1_OC1PE;
+    TIM2->CCER |= TIM_CCER_CC1E;
+    TIM2->CCR1 = 32767;
     
-    // Остальные таймеры только для прерываний (без PWM):
-    // TIM1 - для прерываний FL (PA8 toggle)
     TIM1->CR1 = 0;
     TIM1->PSC = 24;
     TIM1->ARR = 65535;
     TIM1->CNT = 0;
     
-    // TIM3 - для прерываний RR (PA6 toggle)
     TIM3->CR1 = 0;
     TIM3->PSC = 24;
     TIM3->ARR = 65535;
     TIM3->CNT = 0;
     
-    // TIM4 - для прерываний RL (PB9 toggle)
     TIM4->CR1 = 0;
     TIM4->PSC = 24;
     TIM4->ARR = 65535;
     TIM4->CNT = 0;
 
-    // 5. Восстановление прерываний ВСЕХ таймеров
+    my_printf("[HI-Z EXIT] 12. DIER setup\n");
     TIM1->DIER |= TIM_DIER_UIE;
-    TIM2->DIER |= TIM_DIER_UIE;  // TIM2 тоже нужны прерывания!
+    TIM2->DIER |= TIM_DIER_UIE;
     TIM3->DIER |= TIM_DIER_UIE;
     TIM4->DIER |= TIM_DIER_UIE;
 
-    NVIC_EnableIRQ(TIM1_UP_TIM16_IRQn);
-    NVIC_EnableIRQ(TIM2_IRQn);
-    NVIC_EnableIRQ(TIM3_IRQn);
-    NVIC_EnableIRQ(TIM4_IRQn);
+    my_printf("[HI-Z EXIT] 14. NVIC enable SKIPPED (will do in main loop)\n");
+    // ← НЕ ВКЛЮЧАЕМ ПРЕРЫВАНИЯ ЗДЕСЬ!
+    // Вместо этого устанавливаем флаг
 
-    // 6. Восстановление состояния
     g_system_state.hi_impedance_active = 0;
+    
+    my_printf("[HI-Z EXIT] COMPLETE\n");
+}
 
-#ifdef DEBUG_SYSTEM
-    my_printf("[HI-Z] PA15=TIM2_PWM, others=GPIO_OUT\n");
-#endif
+
+
+static void led_blink_pattern(uint32_t current_time, uint32_t interval_ms)
+{
+    if(current_time - g_system_state.led_last_toggle_time >= interval_ms) {
+        g_system_state.led_state = !g_system_state.led_state;
+        g_system_state.led_last_toggle_time = current_time;
+        
+        if(g_system_state.led_state) {
+            HAL_GPIO_WritePin(GPIOA, GPIO_PIN_1, GPIO_PIN_RESET);  // EXT_LED ON
+        } else {
+            HAL_GPIO_WritePin(GPIOA, GPIO_PIN_1, GPIO_PIN_SET);    // EXT_LED OFF
+        }
+    }
+}
+
+void update_system_indicators(void)
+{
+    static uint32_t last_update = 0;
+    uint32_t current_time = HAL_GetTick();
+    
+    if(current_time - last_update < 10) {
+        return;
+    }
+    last_update = current_time;
+    
+    switch(g_system_state.current_mode) {
+        case MODE_BOOT:
+            if(!g_system_state.led_boot_flashed) {
+                HAL_GPIO_WritePin(GPIOA, GPIO_PIN_1, GPIO_PIN_RESET);
+                g_system_state.led_boot_start_time = current_time;
+                g_system_state.led_boot_flashed = 1;
+            }
+            
+            if(current_time - g_system_state.led_boot_start_time >= 1500) {
+                HAL_GPIO_WritePin(GPIOA, GPIO_PIN_1, GPIO_PIN_SET);
+            }
+            break;
+            
+        case MODE_RPM_DYNAMIC:
+            if(g_system_state.rpm_mode_active) {
+                led_blink_pattern(current_time, 100);  // Мигает если приём данных
+            } else {
+                HAL_GPIO_WritePin(GPIOA, GPIO_PIN_1, GPIO_PIN_SET);  // OFF если нет данных
+            }
+            break;
+            
+        case MODE_FIXED_FREQUENCY:
+            led_blink_pattern(current_time, 500);
+            break;
+            
+        case MODE_HI_IMPEDANCE:
+            led_blink_pattern(current_time, 2500);
+            break;
+            
+        case MODE_DISABLED:
+            HAL_GPIO_WritePin(GPIOA, GPIO_PIN_1, GPIO_PIN_SET);
+            break;
+            
+        case MODE_ERROR:
+            led_blink_pattern(current_time, 50);
+            break;
+            
+        default:
+            HAL_GPIO_WritePin(GPIOA, GPIO_PIN_1, GPIO_PIN_SET);
+            break;
+    }
 }

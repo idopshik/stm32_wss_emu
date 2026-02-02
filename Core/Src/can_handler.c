@@ -7,7 +7,6 @@
 
 extern FDCAN_HandleTypeDef hfdcan1;
 extern FDCAN_RxHeaderTypeDef RxHeader1;
-extern whl_chnl *whl_arr[4];
 extern void my_printf(const char *fmt, ...);
 
 uint8_t canRX[8] = {0};
@@ -75,14 +74,19 @@ if (newRPMmessage == 1) {
         int vRRrpm = ((uint16_t)canRX[6] << 8) | (uint16_t)canRX[7];
         
         
-        set_new_speeds(vFLrpm, vFRrpm, vRLrpm, vRRrpm, whl_arr);
+        set_new_speeds(vFLrpm, vFRrpm, vRLrpm, vRRrpm);
+
+        g_system_state.rpm_mode_active = 1;  // ← Флаг что данные приходят
+        g_system_state.led_last_toggle_time = HAL_GetTick();
         
     }
 }
     
     if (freshCanCmd == 1) {
         freshCanCmd = 0;
+        my_printf("[BEFORE CMD] can_tx_status_pending = %d\n", can_tx_status_pending);
         process_can_command(canCmdData);
+        my_printf("[AFTER CMD] can_tx_status_pending = %d\n", can_tx_status_pending);
     }
     
     if (can_tx_status_pending) {
