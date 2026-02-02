@@ -12,7 +12,7 @@
 #include "stm32g4xx_hal.h"
 #include "system_modes.h"
 
-extern void my_printf(const char *fmt, ...);
+extern void printf(const char *fmt, ...);
 
 system_state_t g_system_state;
 
@@ -31,9 +31,7 @@ const char* mode_names[] = {
 
 void system_init_modes(void)
 {
-#ifdef DEBUG_SYSTEM
-    my_printf("[SYSTEM] Initializing modes...\n");
-#endif
+    printf("[SYSTEM] Initializing modes...\n");
 
     g_system_state.current_mode = MODE_BOOT;
     g_system_state.channel_mask = 0x0F;
@@ -42,9 +40,15 @@ void system_init_modes(void)
     g_system_state.pwm_duty_percent = 50;
     
     for(int i = 0; i < 4; i++) {
-        g_system_state.psc_values[i] = 24;
-        g_system_state.arr_values[i] = 59999;
-        g_system_state.arr_values_32bit[i] = 59999;
+        if(i == 1) {  // TIM2 (FR) - 32-битный
+            g_system_state.psc_values[i] = 12;        // PSC для 32-бит
+            g_system_state.arr_values[i] = 0xFFFF;    // Макс для 16-бит части
+            g_system_state.arr_values_32bit[i] = 0xFFFFFFFF;  // Полный 32-бит
+        } else {  // TIM1, TIM3, TIM4 - 16-битные
+            g_system_state.psc_values[i] = 24;
+            g_system_state.arr_values[i] = 59999;
+            g_system_state.arr_values_32bit[i] = 59999;
+        }
     }
     
     g_system_state.analog_signal_present = 0;
@@ -62,10 +66,8 @@ void system_init_modes(void)
     // Подготовка к Hi-Z после boot
     g_system_state.pending_hi_z = 1;
     
-#ifdef DEBUG_SYSTEM
-    my_printf("[SYSTEM] Initialized. Mode: %s\n", 
+    printf("[SYSTEM] Initialized. Mode: %s\n", 
              get_mode_name(g_system_state.current_mode));
-#endif
 }
 
 // ============================================
@@ -77,17 +79,11 @@ void system_switch_mode(operation_mode_t new_mode)
     operation_mode_t old_mode = g_system_state.current_mode;
     
     if(old_mode == new_mode) {
-#ifdef DEBUG_SYSTEM
-        my_printf("[SYSTEM] Already in mode: %s\n", get_mode_name(new_mode));
-#endif
+        printf("[SYSTEM] Already in mode: %s\n", get_mode_name(new_mode));
         return;
     }
     
-#ifdef DEBUG_SYSTEM
-    my_printf("\n[SYSTEM] Mode transition: %s → %s\n", 
-              get_mode_name(old_mode), 
-              get_mode_name(new_mode));
-#endif
+    printf("\n[SYSTEM] Mode transition: %s → %s\n", get_mode_name(old_mode), get_mode_name(new_mode));
     
     // ============================================
     // ВЫХОД ИЗ СТАРОГО РЕЖИМА
@@ -97,21 +93,15 @@ void system_switch_mode(operation_mode_t new_mode)
     switch(old_mode) {
         case MODE_RPM_DYNAMIC:
             g_system_state.rpm_mode_active = 0;
-#ifdef DEBUG_SYSTEM
-            my_printf("[SYSTEM] RPM mode ended\n");
-#endif
+            printf("[SYSTEM] RPM mode ended\n");
             break;
             
         case MODE_FIXED_FREQUENCY:
-#ifdef DEBUG_SYSTEM
-            my_printf("[SYSTEM] Exiting FIXED_FREQUENCY\n");
-#endif
+            printf("[SYSTEM] Exiting FIXED_FREQUENCY\n");
             break;
             
         case MODE_HI_IMPEDANCE:
-#ifdef DEBUG_SYSTEM
-            my_printf("[SYSTEM] Exiting HI_IMPEDANCE\n");
-#endif
+            printf("[SYSTEM] Exiting HI_IMPEDANCE\n");
             break;
             
         default:
@@ -126,65 +116,63 @@ void system_switch_mode(operation_mode_t new_mode)
     // ВХОД В НОВЫЙ РЕЖИМ
     // ============================================
     
-#ifdef DEBUG_SYSTEM
     switch(new_mode) {
         case MODE_BOOT:
-            my_printf("[SYSTEM] BOOT mode\n");
+            printf("[SYSTEM] BOOT mode\n");
             break;
             
         case MODE_RPM_DYNAMIC:
-            my_printf("[SYSTEM] RPM_DYNAMIC mode - waiting for CAN 0x003\n");
-            my_printf("[SYSTEM] LED: controlled by CAN activity\n");
+            printf("[SYSTEM] RPM_DYNAMIC mode - waiting for CAN 0x003\n");
+            printf("[SYSTEM] LED: controlled by CAN activity\n");
             break;
             
         case MODE_FIXED_FREQUENCY:
-            my_printf("[SYSTEM] FIXED_FREQUENCY mode\n");
+            printf("[SYSTEM] FIXED_FREQUENCY mode\n");
             if(g_system_state.target_frequency_hz == 0) {
-                my_printf("[WARNING] Frequency not set!\n");
+                printf("[WARNING] Frequency not set!\n");
             } else {
-                my_printf("[SYSTEM] Frequency: %lu Hz\n", 
+                printf("[SYSTEM] Frequency: %lu Hz\n", 
                          g_system_state.target_frequency_hz);
             }
-            my_printf("[SYSTEM] LED: 1 Hz blink\n");
+            printf("[SYSTEM] LED: 1 Hz blink\n");
             break;
             
         case MODE_HI_IMPEDANCE:
-            my_printf("[SYSTEM] HI_IMPEDANCE mode\n");
-            my_printf("[SYSTEM] GPIO: INPUT (Hi-Z)\n");
-            my_printf("[SYSTEM] SSR: ACTIVE (external signal)\n");
+            printf("[SYSTEM] HI_IMPEDANCE mode\n");
+            printf("[SYSTEM] GPIO: INPUT (Hi-Z)\n");
+            printf("[SYSTEM] SSR: ACTIVE (external signal)\n");
             break;
             
         case MODE_DISABLED:
-            my_printf("[SYSTEM] DISABLED mode\n");
-            my_printf("[SYSTEM] All timers stopped\n");
-            my_printf("[SYSTEM] LED: OFF\n");
+            printf("[SYSTEM] DISABLED mode\n");
+            printf("[SYSTEM] All timers stopped\n");
+            printf("[SYSTEM] LED: OFF\n");
             break;
             
         case MODE_ERROR:
-            my_printf("[SYSTEM] ERROR mode\n");
+            printf("[SYSTEM] ERROR mode\n");
             break;
             
         default:
             break;
     }
-#endif
     
     // Реальные действия при входе
     switch(new_mode) {
         case MODE_RPM_DYNAMIC:
             g_system_state.rpm_mode_active = 0;  // Флаг будет установлен при первом сообщении
             
-            TIM1->CR1 |= TIM_CR1_CEN;      // Включить таймер
-            TIM1->DIER |= TIM_DIER_UIE;    // Включить прерывания
-            TIM1->EGR = TIM_EGR_UG;        // Обнулить счетчик
+            /* TIM1->CR1 |= TIM_CR1_CEN;      // Включить таймер */
+            /* TIM1->DIER |= TIM_DIER_UIE;    // Включить прерывания */
+            /* TIM1->EGR = TIM_EGR_UG;        // Обнулить счетчик */
 
-            TIM3->CR1 |= TIM_CR1_CEN;      // Включить таймер
-            TIM3->DIER |= TIM_DIER_UIE;    // Включить прерывания
-            TIM3->EGR = TIM_EGR_UG;        // Обнулить счетчик
+            /* TIM3->CR1 |= TIM_CR1_CEN;      // Включить таймер */
+            /* TIM3->DIER |= TIM_DIER_UIE;    // Включить прерывания */
+            /* TIM3->EGR = TIM_EGR_UG;        // Обнулить счетчик */
 
-            TIM4->CR1 |= TIM_CR1_CEN;      // Включить таймер
-            TIM4->DIER |= TIM_DIER_UIE;    // Включить прерывания
-            TIM4->EGR = TIM_EGR_UG;        // Обнулить счетчик
+            /* TIM4->CR1 |= TIM_CR1_CEN;      // Включить таймер */
+            /* TIM4->DIER |= TIM_DIER_UIE;    // Включить прерывания */
+            /* TIM4->EGR = TIM_EGR_UG;        // Обнулить счетчик */
             
             break;
             
@@ -203,9 +191,7 @@ void system_switch_mode(operation_mode_t new_mode)
     g_system_state.led_last_toggle_time = HAL_GetTick();
     g_system_state.led_state = 0;
     
-#ifdef DEBUG_SYSTEM
-    my_printf("[SYSTEM] Mode switch complete\n\n");
-#endif
+    printf("[SYSTEM] Mode switch complete\n\n");
 }
 
 // ============================================
@@ -242,27 +228,25 @@ uint32_t system_get_uptime_seconds(void)
 
 void system_print_status(void)
 {
-#ifdef DEBUG_SYSTEM
-    my_printf("\n=== SYSTEM STATUS ===\n");
-    my_printf("Mode: %s\n", get_mode_name(g_system_state.current_mode));
-    my_printf("Channels: 0x%02X\n", g_system_state.channel_mask);
+    printf("\n=== SYSTEM STATUS ===\n");
+    printf("Mode: %s\n", get_mode_name(g_system_state.current_mode));
+    printf("Channels: 0x%02X\n", g_system_state.channel_mask);
     
     if(g_system_state.current_mode == MODE_FIXED_FREQUENCY) {
-        my_printf("Target freq: %lu Hz (%.1f mHz)\n", 
+        printf("Target freq: %lu Hz (%.1f mHz)\n", 
                  g_system_state.target_frequency_hz,
                  g_system_state.target_frequency_mhz / 1000.0f);
     }
     
     if(g_system_state.current_mode == MODE_RPM_DYNAMIC) {
-        my_printf("RPM active: %s\n", g_system_state.rpm_mode_active ? "YES" : "NO");
+        printf("RPM active: %s\n", g_system_state.rpm_mode_active ? "YES" : "NO");
     }
     
-    my_printf("Hi-Z mode: %s\n", g_system_state.hi_impedance_active ? "ACTIVE" : "INACTIVE");
-    my_printf("Last CAN: %lu ms ago\n", 
+    printf("Hi-Z mode: %s\n", g_system_state.hi_impedance_active ? "ACTIVE" : "INACTIVE");
+    printf("Last CAN: %lu ms ago\n", 
              HAL_GetTick() - g_system_state.last_can_command_time);
-    my_printf("Uptime: %lu seconds\n", system_get_uptime_seconds());
-    my_printf("===================\n\n");
-#endif
+    printf("Uptime: %lu seconds\n", system_get_uptime_seconds());
+    printf("===================\n\n");
 }
 
 // ============================================
@@ -291,9 +275,7 @@ void set_all_channels_active(uint8_t active)
 {
     g_system_state.channel_mask = active ? 0x0F : 0x00;
     
-#ifdef DEBUG_SYSTEM
-    my_printf("[SYSTEM] All channels: %s\n", active ? "ACTIVE" : "INACTIVE");
-#endif
+    printf("[SYSTEM] All channels: %s\n", active ? "ACTIVE" : "INACTIVE");
 }
 
 
@@ -305,68 +287,50 @@ void set_all_channels_active(uint8_t active)
 
 void enter_hi_impedance_mode(void)
 {
-#ifdef DEBUG_SYSTEM
-    my_printf("[HI-Z] Entering Hi-Z mode\n");
-#endif
-
-    // 1. Отключение всех таймеров
+    printf("[HI-Z] Entering TRUE Hi-Z mode\n");
+    
+    // 1. Остановить все таймеры и ОТКЛЮЧИТЬ их выходы
     TIM1->CR1 &= ~TIM_CR1_CEN;
-    TIM2->CR1 &= ~TIM_CR1_CEN;  // ЕДИНСТВЕННЫЙ PWM таймер!
+    TIM1->CCER = 0;  // Отключаем ВСЕ каналы TIM1
+    
+    TIM2->CR1 &= ~TIM_CR1_CEN;
+    TIM2->CCER &= ~TIM_CCER_CC1E;  // ТОЛЬКО канал 1 (PA15)
+    
     TIM3->CR1 &= ~TIM_CR1_CEN;
+    TIM3->CCER = 0;
+    
     TIM4->CR1 &= ~TIM_CR1_CEN;
+    TIM4->CCER = 0;
     
-    // 2. Отключение прерываний
-    TIM1->DIER = 0;
-    TIM2->DIER = 0;
-    TIM3->DIER = 0;
-    TIM4->DIER = 0;
+    // 2. НЕ ОТКЛЮЧАТЬ тактирование! Таймеры должны сохранять настройки
     
-    NVIC_DisableIRQ(TIM1_UP_TIM16_IRQn);
-    NVIC_DisableIRQ(TIM2_IRQn);
-    NVIC_DisableIRQ(TIM3_IRQn);
-    NVIC_DisableIRQ(TIM4_IRQn);
-    
-    // 3. Отключение тактирования
-    __HAL_RCC_TIM1_CLK_DISABLE();
-    __HAL_RCC_TIM2_CLK_DISABLE();  // TIM2 тоже отключаем!
-    __HAL_RCC_TIM3_CLK_DISABLE();
-    __HAL_RCC_TIM4_CLK_DISABLE();
-
-    // 4. ВСЕ GPIO КОЛЁС В INPUT MODE
+    // 3. Настроить ВСЕ пины как ANALOG (настоящий Hi-Z)
     GPIO_InitTypeDef GPIO_InitStruct = {0};
-    GPIO_InitStruct.Mode = GPIO_MODE_INPUT;
-    GPIO_InitStruct.Pull = GPIO_PULLDOWN;  // Pull-down по умолчанию
+    GPIO_InitStruct.Mode = GPIO_MODE_ANALOG;      // ← АНАЛОГОВЫЙ!
+    GPIO_InitStruct.Pull = GPIO_NOPULL;           // ← БЕЗ подтяжки!
     GPIO_InitStruct.Speed = GPIO_SPEED_FREQ_LOW;
-
-    // Все пины колёс:
-    // PA8 - FL wheel (GPIO)
-    // PA15 - FR wheel (TIM2_CH1) - ОСОБО ВАЖНЫЙ!
-    // PB9 - RL wheel (GPIO)
-    // PA6 - RR wheel (GPIO)
+    
+    // ВСЕ пины колес:
     GPIO_InitStruct.Pin = GPIO_PIN_8 | GPIO_PIN_15 | GPIO_PIN_6;
     HAL_GPIO_Init(GPIOA, &GPIO_InitStruct);
     
     GPIO_InitStruct.Pin = GPIO_PIN_9;
     HAL_GPIO_Init(GPIOB, &GPIO_InitStruct);
-
-    // 5. Сброс альтернативных функций
-    // PA15 (TIM2_CH1) - сброс AF!
-    GPIOA->AFR[1] &= ~(0xF << 28);  // PA15: биты 28-31
     
-    // Другие пины (на всякий случай):
-    GPIOA->AFR[0] &= ~((0xF << 24) | (0xF << 0));  // PA6, PA8
-    GPIOB->AFR[1] &= ~(0xF << 4);                  // PB9
-
-    // 6. Включение SSR (PB10)
+    // 4. Сбросить альтернативные функции (очистить AFR)
+    GPIOA->AFR[0] = 0;  // PA0-PA7
+    GPIOA->AFR[1] = 0;  // PA8-PA15
+    GPIOB->AFR[0] = 0;  // PB0-PB7
+    GPIOB->AFR[1] = 0;  // PB8-PB15
+    
+    // 5. Включить SSR (PB10)
     HAL_GPIO_WritePin(GPIOB, GPIO_PIN_10, GPIO_PIN_SET);
-
-    // 7. Обновление состояния
+    
+    // 6. Обновить состояние
     g_system_state.hi_impedance_active = 1;
-    system_switch_mode(MODE_HI_IMPEDANCE);
-
-#ifdef DEBUG_SYSTEM
-    my_printf("[HI-Z] All wheels INPUT, PA15(TIM2) AF cleared\n");
-#endif
+    
+    printf("[HI-Z] All pins in TRUE Hi-Z (analog mode)\n");
+    printf("[HI-Z] SSR ON, timers frozen but configured\n");
 }
 
 
@@ -376,78 +340,42 @@ void enter_hi_impedance_mode(void)
 
 void exit_hi_impedance_mode(void)
 {
-    my_printf("[HI-Z EXIT] 1. Enabling clocks\n");
-    __HAL_RCC_TIM1_CLK_ENABLE();
-    __HAL_RCC_TIM2_CLK_ENABLE();
-    __HAL_RCC_TIM3_CLK_ENABLE();
-    __HAL_RCC_TIM4_CLK_ENABLE();
-    my_printf("[HI-Z EXIT] 2. Clocks enabled\n");
-
+    printf("[HI-Z EXIT] Restoring outputs\n");
+    
+    // 1. Выключить SSR
     HAL_GPIO_WritePin(GPIOB, GPIO_PIN_10, GPIO_PIN_RESET);
-    my_printf("[HI-Z EXIT] 3. SSR disabled\n");
-
+    
+    // 2. Восстановить PA15 как TIM2_CH1
     GPIO_InitTypeDef GPIO_InitStruct = {0};
+    GPIO_InitStruct.Pin = GPIO_PIN_15;
+    GPIO_InitStruct.Mode = GPIO_MODE_AF_PP;      // Альтернативная функция
     GPIO_InitStruct.Pull = GPIO_NOPULL;
     GPIO_InitStruct.Speed = GPIO_SPEED_FREQ_LOW;
-
-    GPIO_InitStruct.Mode = GPIO_MODE_AF_PP;
-    GPIO_InitStruct.Pin = GPIO_PIN_15;
-    GPIO_InitStruct.Alternate = GPIO_AF1_TIM2;
+    GPIO_InitStruct.Alternate = GPIO_AF1_TIM2;   // TIM2_CH1
     HAL_GPIO_Init(GPIOA, &GPIO_InitStruct);
-
+    
+    // 3. Остальные пины как обычные выходы (или что нужно)
     GPIO_InitStruct.Mode = GPIO_MODE_OUTPUT_PP;
     GPIO_InitStruct.Alternate = 0;
     
     GPIO_InitStruct.Pin = GPIO_PIN_8;
     HAL_GPIO_Init(GPIOA, &GPIO_InitStruct);
-    HAL_GPIO_WritePin(GPIOA, GPIO_PIN_8, GPIO_PIN_RESET);
     
     GPIO_InitStruct.Pin = GPIO_PIN_9;
     HAL_GPIO_Init(GPIOB, &GPIO_InitStruct);
-    HAL_GPIO_WritePin(GPIOB, GPIO_PIN_9, GPIO_PIN_RESET);
     
     GPIO_InitStruct.Pin = GPIO_PIN_6;
     HAL_GPIO_Init(GPIOA, &GPIO_InitStruct);
-    HAL_GPIO_WritePin(GPIOA, GPIO_PIN_6, GPIO_PIN_RESET);
-
-    my_printf("[HI-Z EXIT] 9. Timer config start\n");
-    TIM2->CR1 = 0;
-    TIM2->PSC = 12;
-    TIM2->ARR = 65535;
-    TIM2->CNT = 0;
-    TIM2->CCMR1 |= TIM_CCMR1_OC1M_1 | TIM_CCMR1_OC1M_2;
-    TIM2->CCMR1 |= TIM_CCMR1_OC1PE;
-    TIM2->CCER |= TIM_CCER_CC1E;
-    TIM2->CCR1 = 32767;
     
-    TIM1->CR1 = 0;
-    TIM1->PSC = 24;
-    TIM1->ARR = 65535;
-    TIM1->CNT = 0;
+    // 4. Включить выход TIM2 (но НЕ запускать счет!)
+    TIM2->CCER |= TIM_CCER_CC1E;  // Канал 1 активен
     
-    TIM3->CR1 = 0;
-    TIM3->PSC = 24;
-    TIM3->ARR = 65535;
-    TIM3->CNT = 0;
+    // 5. Таймеры остаются ОСТАНОВЛЕННЫМИ (CR1.CEN = 0)
+    // Их запустит system_switch_mode() когда нужно
     
-    TIM4->CR1 = 0;
-    TIM4->PSC = 24;
-    TIM4->ARR = 65535;
-    TIM4->CNT = 0;
-
-    my_printf("[HI-Z EXIT] 12. DIER setup\n");
-    TIM1->DIER |= TIM_DIER_UIE;
-    TIM2->DIER |= TIM_DIER_UIE;
-    TIM3->DIER |= TIM_DIER_UIE;
-    TIM4->DIER |= TIM_DIER_UIE;
-
-    my_printf("[HI-Z EXIT] 14. NVIC enable SKIPPED (will do in main loop)\n");
-    // ← НЕ ВКЛЮЧАЕМ ПРЕРЫВАНИЯ ЗДЕСЬ!
-    // Вместо этого устанавливаем флаг
-
     g_system_state.hi_impedance_active = 0;
     
-    my_printf("[HI-Z EXIT] COMPLETE\n");
+    printf("[HI-Z EXIT] Outputs restored, timers ready\n");
 }
 
 

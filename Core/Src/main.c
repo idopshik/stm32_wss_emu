@@ -42,12 +42,7 @@
 #define numRL 2
 #define numRR 3
 
-FDCAN_TxHeaderTypeDef TxHeader1;
-FDCAN_RxHeaderTypeDef RxHeader1;
-
-
 char ms100Flag = 0;
-char ms100Flag_2 = 0;
 
 
 volatile uint8_t can_tx_status_pending = 0;
@@ -231,26 +226,30 @@ int main(void)
     // Инициализация управления колесами
     wheel_control_init();
 
-    // Тест 1: Нулевые скорости
     set_new_speeds(500, 500, 500, 500);
-    HAL_Delay(1000);
+
+
+
+    // Тест 1: Нулевые скорости
+
+    /* set_new_speeds(500, 500, 500, 500); */
+    /* HAL_Delay(1000); */
 
     // Тест 2: Средние скорости
-    set_new_speeds(1000, 10000, 1000, 1000);
-    HAL_Delay(1000);
+    /* set_new_speeds(1000, 10000, 1000, 1000); */
+    /* HAL_Delay(1000); */
 
     // Тест 3: Высокие скорости (переключение прескалера)
-    set_new_speeds(5000, 50000, 5000, 5000);
-    HAL_Delay(1000);
+    /* set_new_speeds(5000, 50000, 5000, 5000); */
+    /* HAL_Delay(1000); */
 
     // Тест 4: Разные скорости
-    set_new_speeds(1000, 20000, 3000, 4000);
-    HAL_Delay(1000);
+    /* set_new_speeds(1000, 20000, 3000, 4000); */
+    /* HAL_Delay(1000); */
     
     // Теперь можем вызывать без передачи whl_arr
     /* set_new_speeds(10, 10, 10, 10); */
 
-    // Изначально все выключено (Hi-Z режим активируется автоматом)
     HAL_GPIO_WritePin(GPIOA, EXT_LED_Pin, GPIO_PIN_SET);
 
 
@@ -275,6 +274,7 @@ while (1) {
 
 
 
+    //#####  ALIVE SHOW logic ######
     static uint32_t last_blink_time = 0;
     uint32_t current_time = HAL_GetTick();
     
@@ -282,6 +282,11 @@ while (1) {
     if (current_time - last_blink_time >= 500) {
         last_blink_time = current_time;
         HAL_GPIO_TogglePin(GPIOC, GPIO_PIN_6);  // PC6 - LED_Blue
+    }
+    // main cycle alive_out to logic analyzer
+    if (ms100Flag > 0) {
+        ms100Flag = 0;
+        HAL_GPIO_TogglePin(GPIOB, Out_1_Pin);
     }
 
 
@@ -293,13 +298,8 @@ while (1) {
     can_process_in_main();
     
 
-    // Старая логика мигания светодиодов (100 мс)
-    if (ms100Flag > 0) {
-        ms100Flag = 0;
-        HAL_GPIO_TogglePin(GPIOB, Out_1_Pin);
-    }
 
-    // ← ДОБАВИТЬ: Включение прерываний ПОСЛЕ exit_hi_impedance_mode()
+    // ← ДОБАВИТЬ: Включение прерываний ПОСЛЕ exit_hi_impedance_mode()  НЕ ПОМОГАЕТ ВИСНЕТ ВСЁ РАВНО.
     static uint8_t nvic_enabled = 0;
     if (!nvic_enabled && !g_system_state.hi_impedance_active && 
         g_system_state.current_mode == MODE_RPM_DYNAMIC) {
@@ -809,7 +809,6 @@ void HAL_TIM_PeriodElapsedCallback(TIM_HandleTypeDef *htim)
     if (htim->Instance == TIM6) {
         /*my_printf("100 ms \n");*/
         ms100Flag = 1;
-        ms100Flag_2 = 1;
     }
     if (htim->Instance == TIM8) {
         update_led_indication();  // ← Вызываем здесь

@@ -5,8 +5,9 @@
 #include <string.h>
 #include <stdio.h>
 
+/* extern FDCAN_RxHeaderTypeDef RxHeader1; */
+FDCAN_RxHeaderTypeDef RxHeader1;
 extern FDCAN_HandleTypeDef hfdcan1;
-extern FDCAN_RxHeaderTypeDef RxHeader1;
 extern void my_printf(const char *fmt, ...);
 
 uint8_t canRX[8] = {0};
@@ -66,7 +67,6 @@ void can_process_in_main(void)
 if (newRPMmessage == 1) {
     newRPMmessage = 0;
     
-    if(g_system_state.current_mode == MODE_RPM_DYNAMIC) {
         
         int vFLrpm = ((uint16_t)canRX[0] << 8) | (uint16_t)canRX[1];
         int vFRrpm = ((uint16_t)canRX[2] << 8) | (uint16_t)canRX[3];
@@ -79,7 +79,6 @@ if (newRPMmessage == 1) {
         g_system_state.rpm_mode_active = 1;  // ← Флаг что данные приходят
         g_system_state.led_last_toggle_time = HAL_GetTick();
         
-    }
 }
     
     if (freshCanCmd == 1) {
