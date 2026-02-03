@@ -68,8 +68,8 @@ void system_init_modes(void)
 {
     printf("[SYSTEM] Initializing...\n");
 
-    // BOOT состояние: система ждёт CAN команды, но может принимать RPM данные
-    g_system_state.current_mode = MODE_BOOT;
+    // ✅ СРАЗУ ПЕРЕХОДИМ В RPM РЕЖИМ вместо BOOT
+    g_system_state.current_mode = MODE_RPM_DYNAMIC;  // Было: MODE_BOOT
     g_system_state.channel_mask = 0x0F;  // Все каналы включены по умолчанию
     g_system_state.target_frequency_hz = 0;
     g_system_state.target_frequency_mhz = 0;
@@ -87,24 +87,31 @@ void system_init_modes(void)
     
     g_system_state.last_can_command_time = HAL_GetTick();
     g_system_state.boot_time = HAL_GetTick();
-    g_system_state.led_last_toggle_time = 0;
+    g_system_state.led_last_toggle_time = HAL_GetTick();  // ✅ Инициализируем для RPM режима
     g_system_state.led_state = 0;
-    g_system_state.rpm_signal_active = 0;
+    g_system_state.rpm_signal_active = 0;  // ✅ Данных пока нет
     
-    // BOOT LED: одна вспышка 1500ms
+    // ✅ BOOT LED флаги больше не нужны (или оставь для совместимости)
     g_system_state.led_boot_flashed = 0;
     g_system_state.led_boot_start_time = HAL_GetTick();
     
-    // Убедиться, что SSR выключен при загрузке
+    // SSR выключен при загрузке
     HAL_GPIO_WritePin(GPIOB, GPIO_PIN_10, GPIO_PIN_RESET);  // PB10 = LOW
     
-    // Важно: в BOOT режиме таймеры должны быть ОСТАНОВЛЕНЫ
-    TIM1->CR1 &= ~TIM_CR1_CEN;
-    TIM2->CR1 &= ~TIM_CR1_CEN;
-    TIM3->CR1 &= ~TIM_CR1_CEN;
-    TIM4->CR1 &= ~TIM_CR1_CEN;
+    // ✅ ТАЙМЕРЫ ЗАПУЩЕНЫ, но выходы будут включены только при RPM > 0x3F
+    TIM1->CR1 |= TIM_CR1_CEN;
+    TIM2->CR1 |= TIM_CR1_CEN;
+    TIM3->CR1 |= TIM_CR1_CEN;
+    TIM4->CR1 |= TIM_CR1_CEN;
     
-    printf("[SYSTEM] Ready. Waiting for CAN command.\n");
+    // ✅ Включаем выходы (они будут переключаться в прерываниях)
+    TIM1->CCER |= TIM_CCER_CC1E;
+    TIM2->CCER |= TIM_CCER_CC1E;
+    TIM3->CCER |= TIM_CCER_CC1E;
+    TIM4->CCER |= TIM_CCER_CC1E;
+    
+    printf("[SYSTEM] Started in RPM mode. Waiting for CAN 0x003 data.\n");
+    printf("[SYSTEM] LED will turn ON when RPM data arrives.\n");
 }
 
 void system_switch_mode(operation_mode_t new_mode)
@@ -286,6 +293,7 @@ void update_system_indicators(void)
     static uint32_t last_update = 0;
     uint32_t current_time = HAL_GetTick();
     
+    // Дебаунс: обновляем не чаще 10ms
     if(current_time - last_update < 10) {
         return;
     }
@@ -294,41 +302,50 @@ void update_system_indicators(void)
     switch(g_system_state.current_mode) {
         
         case MODE_BOOT:
-            // Одна вспышка 1500ms при загрузке
+            // ✅ Одна вспышка 1500ms при загрузке
             if(!g_system_state.led_boot_flashed) {
                 HAL_GPIO_WritePin(GPIOA, GPIO_PIN_1, GPIO_PIN_RESET);  // ON
                 g_system_state.led_boot_start_time = current_time;
                 g_system_state.led_boot_flashed = 1;
             }
             
+            // Выключить через 1500ms
             if(current_time - g_system_state.led_boot_start_time >= 1500) {
                 HAL_GPIO_WritePin(GPIOA, GPIO_PIN_1, GPIO_PIN_SET);    // OFF
             }
             break;
         
         case MODE_RPM_DYNAMIC:
-            // Мигает ТОЛЬКО если есть сигнал
-            // Гаснет если нет сигнала >500ms
-            if(g_system_state.rpm_signal_active) {
-                led_blink_pattern(current_time, 100);  // Мигание 100ms
-                
-                // Проверить, не было ли сигнала давно
-                if(current_time - g_system_state.led_last_toggle_time > 500) {
-                    g_system_state.rpm_signal_active = 0;
-                }
-            } else {
+            // ✅ Проверяем таймаут 500ms с момента последних данных
+            if(current_time - g_system_state.led_last_toggle_time > 500) {
+                // Нет данных >500ms → гасим LED и флаг
+                g_system_state.rpm_signal_active = 0;
                 HAL_GPIO_WritePin(GPIOA, GPIO_PIN_1, GPIO_PIN_SET);  // OFF
+            }
+            else if(g_system_state.rpm_signal_active) {
+                // ✅ Данные есть → мигаем 100ms
+                static uint32_t last_blink = 0;
+                if(current_time - last_blink >= 100) {
+                    last_blink = current_time;
+                    HAL_GPIO_TogglePin(GPIOA, GPIO_PIN_1);
+                }
             }
             break;
         
         case MODE_FIXED_FREQUENCY:
-            // Постоянное мигание 500ms
-            led_blink_pattern(current_time, 500);
+            // ✅ Постоянное мигание 500ms
+            if(current_time - g_system_state.led_last_toggle_time >= 500) {
+                g_system_state.led_last_toggle_time = current_time;
+                HAL_GPIO_TogglePin(GPIOA, GPIO_PIN_1);
+            }
             break;
         
         case MODE_EXTERNAL_SIGNAL:
-            // Медленное мигание 2500ms
-            led_blink_pattern(current_time, 2500);
+            // ✅ Медленное мигание 2500ms
+            if(current_time - g_system_state.led_last_toggle_time >= 2500) {
+                g_system_state.led_last_toggle_time = current_time;
+                HAL_GPIO_TogglePin(GPIOA, GPIO_PIN_1);
+            }
             break;
         
         default:

@@ -778,24 +778,12 @@ static void MX_GPIO_Init(void)
 }
 
 /* USER CODE BEGIN 4 */
-void update_led_indication(void)
-{
-    if(g_system_state.current_mode == MODE_RPM_DYNAMIC) {
-        if(HAL_GetTick() - g_system_state.led_last_toggle_time > 500) {
-            g_system_state.rpm_signal_active = 0;  // Нет данных 500ms
-        }
-    }
-}
 void HAL_TIM_PeriodElapsedCallback(TIM_HandleTypeDef *htim)
 {
     if (htim->Instance == TIM6) {
         /*my_printf("100 ms \n");*/
         ms100Flag = 1;
     }
-    if (htim->Instance == TIM8) {
-        update_led_indication();  // ← Вызываем здесь
-    }
-
     if (htim->Instance == TIM1) {
         HAL_GPIO_TogglePin(GPIOA, tim1_out_Pin);
     }
