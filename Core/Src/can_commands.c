@@ -163,20 +163,18 @@ void process_can_command(uint8_t* data)
 
 void send_system_status(void)
 {
+    HAL_Delay(25);  // 25ms turnaround time
     my_printf("[CAN TX] Status\n");
     
     uint8_t status_data[8] = {0};
     
-    // Byte 0: Режим (0x01, 0x02, 0x03)
     status_data[0] = (uint8_t)g_system_state.current_mode;
-    
-    // Byte 1: Маска каналов
     status_data[1] = g_system_state.channel_mask;
     
     // Bytes 2-3: Частота ×10 (только для FIXED)
     uint16_t freq_x10 = 0;
     if(g_system_state.current_mode == MODE_FIXED_FREQUENCY) {
-        freq_x10 = (uint16_t)(g_system_state.target_frequency_hz * 5);
+        freq_x10 = (uint16_t)(g_system_state.target_frequency_hz * 10);  // ✅ ИСПРАВЛЕНО!
     }
     status_data[2] = freq_x10 & 0xFF;
     status_data[3] = (freq_x10 >> 8) & 0xFF;
