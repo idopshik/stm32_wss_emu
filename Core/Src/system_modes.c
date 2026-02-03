@@ -232,10 +232,10 @@ void system_switch_mode(operation_mode_t new_mode)
             HAL_GPIO_Init(GPIOB, &GPIO_InitStruct);
             
             // Очистить AFR
-            GPIOA->AFR[0] = 0;
-            GPIOA->AFR[1] = 0;
-            GPIOB->AFR[0] = 0;
-            GPIOB->AFR[1] = 0;
+            /* GPIOA->AFR[0] = 0; */
+            /* GPIOA->AFR[1] = 0; */
+            /* GPIOB->AFR[0] = 0; */
+            /* GPIOB->AFR[1] = 0; */
             
             // ✅ ВКЛЮЧИТЬ SSR для питания оптопары
             HAL_GPIO_WritePin(GPIOB, GPIO_PIN_10, GPIO_PIN_SET);  // PB10 = HIGH
