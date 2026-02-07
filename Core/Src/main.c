@@ -49,12 +49,12 @@ char ms100Flag = 0;
  uint8_t can_tx_error_pending = 0;
 uint8_t can_tx_error_code = 0;            
 
+uint8_t recievingcounger = 0;    // for LED logic
+uint8_t can_active_receiving = 0;
 
 
 /* USER CODE END PTD */
 
-uint8_t recievingcounger = 0;    // for LED logic
-uint8_t can_active_receiving = 0;
 
 /* Private define ------------------------------------------------------------*/
 /* USER CODE BEGIN PD */
@@ -93,9 +93,6 @@ static void MX_TIM4_Init(void);
 static void MX_TIM6_Init(void);
 static void MX_TIM8_Init(void);
 static void MX_USART1_UART_Init(void);
-
-
-
 /* USER CODE BEGIN PFP */
 
 void my_printf(const char *fmt, ...);
@@ -177,7 +174,7 @@ int main(void)
   /* MCU Configuration--------------------------------------------------------*/
 
   /* Reset of all peripherals, Initializes the Flash interface and the Systick. */
- HAL_Init();
+  HAL_Init();
 
   /* USER CODE BEGIN Init */
 
@@ -205,7 +202,7 @@ int main(void)
     can_handler_init();
 
 
-    // Start four timers (как в старом коде)
+    // Start four timers (as in previous code version)
     HAL_TIM_Base_Start_IT(&htim1);
     HAL_TIM_Base_Start_IT(&htim2);
     HAL_TIM_Base_Start_IT(&htim3);
@@ -215,47 +212,53 @@ int main(void)
 
     HAL_TIM_OC_Start_IT(&htim2, TIM_CHANNEL_1);
 
+  /* NOTE: PA15 (TIM2 CH1/FR channel) GPIO configuration is handled in hal_msp.c
+   * in HAL_TIM_MspPostInit() callback and is configured as GPIO_MODE_AF_OD
+   * (Alternate Function Open-Drain) for 5V external pull-up compatibility.
+   * See stm32g4xx_hal_msp.c for details.
+   */
+
     my_printf("[ INFO ] my_printf Program start now\n");
     printf("[ INFO ] SWV: Program start now\n");
 
 
-    // Инициализация системы режимов
+    // Initialize system operation modes
     system_init_modes();
 
-    // Инициализация управления колесами
+    // Initialize wheel control subsystem
     wheel_control_init();
 
     set_new_speeds(500, 500, 500, 500);
 
 
 
-    // Тест 1: Нулевые скорости
+    // Test 1: Zero speeds
 
     /* set_new_speeds(500, 500, 500, 500); */
     /* HAL_Delay(1000); */
 
-    // Тест 2: Средние скорости
+    // Test 2: Medium speeds
     /* set_new_speeds(1000, 10000, 1000, 1000); */
     /* HAL_Delay(1000); */
 
-    // Тест 3: Высокие скорости (переключение прескалера)
+    // Test 3: High speeds (prescaler switching)
     /* set_new_speeds(5000, 50000, 5000, 5000); */
     /* HAL_Delay(1000); */
 
-    // Тест 4: Разные скорости
+    // Test 4: Different speeds for each wheel
     /* set_new_speeds(1000, 20000, 3000, 4000); */
     /* HAL_Delay(1000); */
     
-    // Теперь можем вызывать без передачи whl_arr
+    // Now can call without passing whl_arr
     /* set_new_speeds(10, 10, 10, 10); */
 
     HAL_GPIO_WritePin(GPIOA, EXT_LED_Pin, GPIO_PIN_SET);
 
 
-    // Переход в Hi-Z режим после инициализации
+    // Transition to Hi-Z mode after initialization
     /* enter_hi_impedance_mode(); */
 
-    //dirty hack
+    // dirty hack
     /* g_system_state.current_mode = MODE_RPM_DYNAMIC; */
 
 
@@ -264,12 +267,15 @@ int main(void)
 
 
 
-    /* USER CODE END 2 */
+  /* USER CODE END 2 */
 
-    /* Infinite loop */
-    /* USER CODE BEGIN WHILE */
+  /* Infinite loop */
+  /* USER CODE BEGIN WHILE */
+  while (1)
+  {
+    /* USER CODE END WHILE */
 
-while (1) {
+    /* USER CODE BEGIN 3 */
 
 
 
@@ -277,7 +283,7 @@ while (1) {
     static uint32_t last_blink_time = 0;
     uint32_t current_time = HAL_GetTick();
     
-    // Мигание синего LED каждые 500ms
+    // Blue LED blink every 500ms
     if (current_time - last_blink_time >= 500) {
         last_blink_time = current_time;
         HAL_GPIO_TogglePin(GPIOC, GPIO_PIN_6);  // PC6 - LED_Blue
@@ -289,17 +295,17 @@ while (1) {
     }
 
 
-    // ✅ LED INDICATION BY MODE
+    // � LED INDICATION BY MODE
     update_system_indicators();
 
 
-    // Обработка RPM данных
+    // Process RPM data from CAN
     can_process_in_main();
     
     HAL_Delay(1);
-}
 
 
+  }
   /* USER CODE END 3 */
 }
 
@@ -752,8 +758,28 @@ static void MX_GPIO_Init(void)
   GPIO_InitStruct.Pull = GPIO_NOPULL;
   HAL_GPIO_Init(User_Button_GPIO_Port, &GPIO_InitStruct);
 
-  /*Configure GPIO pins : EXT_LED_Pin tim3_out_Pin tim1_out_Pin */
-  GPIO_InitStruct.Pin = EXT_LED_Pin|tim3_out_Pin|tim1_out_Pin;
+  /* Configure GPIO pin EXT_LED_Pin (PA1) as open-drain output.
+   * EXT_LED is powered externally from 5V via pull-up resistor.
+   * Open-drain (OD) mode allows the GPIO to pull the line low (sink current)
+   * while allowing the external 5V pull-up resistor to bring it high.
+   * This configuration protects the GPIO pin from 5V overvoltage exposure.
+   *
+   * NOTE: Similar open-drain configuration will be applied to PA15 (TIM2 CH1/FR)
+   * when external 5V level-shifting is required.
+   */
+  GPIO_InitStruct.Pin = EXT_LED_Pin;
+  GPIO_InitStruct.Mode = GPIO_MODE_OUTPUT_OD;
+  GPIO_InitStruct.Pull = GPIO_NOPULL;
+  GPIO_InitStruct.Speed = GPIO_SPEED_FREQ_LOW;
+  HAL_GPIO_Init(EXT_LED_GPIO_Port, &GPIO_InitStruct);
+
+  /* Configure GPIO pins tim3_out_Pin and tim1_out_Pin as push-pull outputs.
+   * These are standard 3.3V signal outputs for wheel speed sensor emulation
+   * on the FL (Front Left) and RL (Rear Left) channels respectively.
+   * Push-pull mode actively drives the output both high and low,
+   * suitable for logic-level signals.
+   */
+  GPIO_InitStruct.Pin = tim3_out_Pin|tim1_out_Pin;
   GPIO_InitStruct.Mode = GPIO_MODE_OUTPUT_PP;
   GPIO_InitStruct.Pull = GPIO_NOPULL;
   GPIO_InitStruct.Speed = GPIO_SPEED_FREQ_LOW;

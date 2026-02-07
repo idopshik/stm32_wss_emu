@@ -22,7 +22,9 @@ system_state_t g_system_state;
 
 
 /**
- * Восстанавливает GPIO как таймерные выходы после EXTERNAL режима
+ * Восстанавливает GPIO как таймерные выходы после EXTERNAL_SIGNAL режима
+ * PA15 восстанавливается в режиме Alternate Function Open-Drain
+ * для совместимости с 5V внешним pull-up резистором
  */
 static void restore_gpio_after_external(void)
 {
@@ -35,33 +37,33 @@ static void restore_gpio_after_external(void)
     __HAL_RCC_GPIOA_CLK_ENABLE();
     __HAL_RCC_GPIOB_CLK_ENABLE();
     
-    // TIM2_CH1 - Output Compare (автоматический)
-    GPIO_InitStruct.Pin = GPIO_PIN_15;        // PA15
-    GPIO_InitStruct.Mode = GPIO_MODE_AF_PP;   // Alternate Function
+    // TIM2_CH1 - Output Compare with Open-Drain (for 5V external pull-up)
+    GPIO_InitStruct.Pin = GPIO_PIN_15;        // PA15 (FR channel)
+    GPIO_InitStruct.Mode = GPIO_MODE_AF_OD;   // Alternate Function Open-Drain
     GPIO_InitStruct.Pull = GPIO_NOPULL;
     GPIO_InitStruct.Speed = GPIO_SPEED_FREQ_HIGH;
     GPIO_InitStruct.Alternate = GPIO_AF1_TIM2; // TIM2 Channel 1
     HAL_GPIO_Init(GPIOA, &GPIO_InitStruct);
     
-    // TIM1 - ручное переключение в прерывании
+    // TIM1 - manual toggle in interrupt handler
     GPIO_InitStruct.Pin = GPIO_PIN_8;         // PA8
-    GPIO_InitStruct.Mode = GPIO_MODE_OUTPUT_PP; // Простой выход
-    GPIO_InitStruct.Alternate = 0;            // Без AF
+    GPIO_InitStruct.Mode = GPIO_MODE_OUTPUT_PP; // Simple output
+    GPIO_InitStruct.Alternate = 0;            // No AF
     HAL_GPIO_Init(GPIOA, &GPIO_InitStruct);
     
-    // TIM3 - ручное переключение в прерывании
+    // TIM3 - manual toggle in interrupt handler
     GPIO_InitStruct.Pin = GPIO_PIN_6;         // PA6
-    GPIO_InitStruct.Mode = GPIO_MODE_OUTPUT_PP; // Простой выход
+    GPIO_InitStruct.Mode = GPIO_MODE_OUTPUT_PP; // Simple output
     GPIO_InitStruct.Alternate = 0;
     HAL_GPIO_Init(GPIOA, &GPIO_InitStruct);
     
-    // TIM4 - ручное переключение в прерывании
+    // TIM4 - manual toggle in interrupt handler
     GPIO_InitStruct.Pin = GPIO_PIN_9;         // PB9
-    GPIO_InitStruct.Mode = GPIO_MODE_OUTPUT_PP; // Простой выход
+    GPIO_InitStruct.Mode = GPIO_MODE_OUTPUT_PP; // Simple output
     GPIO_InitStruct.Alternate = 0;
     HAL_GPIO_Init(GPIOB, &GPIO_InitStruct);
     
-    printf("[SYSTEM] GPIO restored: TIM2=AF, TIM1/3/4=OUTPUT\n");
+    printf("[SYSTEM] GPIO restored: TIM2=AF_OD, TIM1/3/4=OUTPUT_PP\n");
 }
 
 void system_init_modes(void)
@@ -219,16 +221,16 @@ void system_switch_mode(operation_mode_t new_mode)
             GPIO_InitStruct.Pull = GPIO_NOPULL;
             GPIO_InitStruct.Speed = GPIO_SPEED_FREQ_LOW;
             
-            GPIO_InitStruct.Pin = GPIO_PIN_8;   // FL
+            GPIO_InitStruct.Pin = GPIO_PIN_8;   // FL (PA8)
             HAL_GPIO_Init(GPIOA, &GPIO_InitStruct);
             
-            GPIO_InitStruct.Pin = GPIO_PIN_15;  // FR
+            GPIO_InitStruct.Pin = GPIO_PIN_15;  // FR (PA15)
             HAL_GPIO_Init(GPIOA, &GPIO_InitStruct);
             
-            GPIO_InitStruct.Pin = GPIO_PIN_6;   // RL
+            GPIO_InitStruct.Pin = GPIO_PIN_6;   // RL (PA6)
             HAL_GPIO_Init(GPIOA, &GPIO_InitStruct);
             
-            GPIO_InitStruct.Pin = GPIO_PIN_9;   // RR
+            GPIO_InitStruct.Pin = GPIO_PIN_9;   // RR (PB9)
             HAL_GPIO_Init(GPIOB, &GPIO_InitStruct);
             
             // Очистить AFR
