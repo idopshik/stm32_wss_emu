@@ -1,13 +1,22 @@
+
 /**
- * can_commands.c - VERSION 4.2 (ONLY 3 MODES)
+ * can_commands.c - VERSION 4.3 (FIXED STATUS FREQUENCY)
  * 
  * Команды:
  * 0x01 = RPM MODE (динамический)
  * 0x02 = FIXED MODE (статичный)
  * 0x03 = EXTERNAL MODE (GPIO HIGH-Z)
  * 
- * Никаких других команд, никаких pending флагов.
- * Система переходит в режим СРАЗУ при команде.
+ * ИСПРАВЛЕНИЕ (v4.3):
+ *   send_system_status() возвращал частоту ТАЙМЕРА вместо выходной частоты GPIO.
+ *   target_frequency_mhz хранит частоту таймера в миллигерцах
+ *   (= output_Hz × 2 × 1000).
+ *   Статус байты 2-3 должны содержать output_Hz × 10:
+ *     freq_x10 = target_frequency_mhz / 200
+ *              = (output_Hz × 2 × 1000) / 200 = output_Hz × 10  ✓
+ *
+ *   Старый (неверный) код:
+ *     freq_x10 = target_frequency_hz * 10   (= timer_Hz × 10, в 2 раза больше)
  */
 
 #include "can_commands.h"
@@ -57,7 +66,7 @@ void process_can_command(uint8_t* data)
             // Переходим в режим
             system_switch_mode(MODE_RPM_DYNAMIC);
             
-            can_tx_status_pending = 1;  // ✅ ДОБАВИТЬ
+            can_tx_status_pending = 1;
             break;
         }
         
@@ -65,22 +74,27 @@ void process_can_command(uint8_t* data)
         case 0x02: {
             uint8_t channel_mask = data[1];
             
+            // Freq_Timer: частота ТАЙМЕРА в миллигерцах (uint32_t LE)
+            //   = Желаемая_выходная_частота_Гц × 2 × 1000
             uint32_t freq_mhz = ((uint32_t)data[2]) |
                                 ((uint32_t)data[3] << 8) |
                                 ((uint32_t)data[4] << 16) |
                                 ((uint32_t)data[5] << 24);
             
+            // freq_hz здесь — это частота ТАЙМЕРА (не выходная)
             float freq_hz = freq_mhz / 1000.0f;
             
-            my_printf("[CAN] FIXED MODE: %.3f Hz, channels: 0x%02X\n", freq_hz, channel_mask);
+            my_printf("[CAN] FIXED MODE: timer=%.3f Hz (out=%.3f Hz), channels: 0x%02X\n",
+                      freq_hz, freq_hz / 2.0f, channel_mask);
             
             if(freq_mhz < 1000 || freq_mhz > 4500000) {
                 my_printf("[CAN ERROR] Frequency out of range: %lu mHz\n", freq_mhz);
                 break;
             }
             
-            g_system_state.target_frequency_hz = (uint32_t)freq_hz;
-            g_system_state.target_frequency_mhz = freq_mhz;
+            // Сохраняем частоту таймера — send_system_status разделит на 2 при отправке
+            g_system_state.target_frequency_hz = (uint32_t)freq_hz;   // timer Hz
+            g_system_state.target_frequency_mhz = freq_mhz;           // timer mHz
             g_system_state.channel_mask = (channel_mask == 0xFF) ? 0x0F : channel_mask;
             
             // Настроить таймеры
@@ -124,7 +138,7 @@ void process_can_command(uint8_t* data)
             // Переходим в режим
             system_switch_mode(MODE_FIXED_FREQUENCY);
             
-            can_tx_status_pending = 1;  // ✅ ДОБАВИТЬ
+            can_tx_status_pending = 1;
             break;
         }
         
@@ -135,11 +149,10 @@ void process_can_command(uint8_t* data)
             // Переходим в режим (GPIO будут переведены в HIGH-Z)
             system_switch_mode(MODE_EXTERNAL_SIGNAL);
              
-            can_tx_status_pending = 1;  // ✅ ДОБАВИТЬ
-            break;
-            
+            can_tx_status_pending = 1;
             break;
         }
+
         case 0x07: {
             my_printf("[CAN] STATUS REQUEST\n");
             can_tx_status_pending = 1;
@@ -148,8 +161,8 @@ void process_can_command(uint8_t* data)
         
         default: {
             my_printf("[CAN ERROR] Unknown command: 0x%02X\n", command);
-            can_tx_error_pending = 1;    // ✅ ДОБАВИТЬ
-            can_tx_error_code = 0x01;    // ✅ ДОБАВИТЬ (код ошибки "неизвестная команда")
+            can_tx_error_pending = 1;
+            can_tx_error_code = 0x01;    // код ошибки "неизвестная команда"
             break;
         }
     }
@@ -171,19 +184,34 @@ void send_system_status(void)
     status_data[0] = (uint8_t)g_system_state.current_mode;
     status_data[1] = g_system_state.channel_mask;
     
-    // Bytes 2-3: Частота ×10 (только для FIXED)
+    // Байты 2-3: Выходная частота × 10 (только для FIXED)
+    //
+    // target_frequency_mhz = timer_Hz × 1000 = output_Hz × 2 × 1000
+    //
+    // FIX: делим на 200, чтобы получить output_Hz × 10:
+    //   target_frequency_mhz / 200 = (output_Hz × 2000) / 200 = output_Hz × 10  ✓
+    //
+    // Старый (неверный) код использовал target_frequency_hz * 10:
+    //   target_frequency_hz = timer_Hz = output_Hz × 2
+    //   => output_Hz × 2 × 10 = output_Hz × 20  ← в 2 раза больше нужного
+    //
+    // Пример: output = 1000 Hz, freq_mhz = 2 000 000
+    //   ИСПРАВЛЕННЫЙ:  2 000 000 / 200 = 10 000 → 1000.0 Hz  ✓
+    //   СТАРЫЙ:        2000 * 10        = 20 000 → 2000.0 Hz  ✗
     uint16_t freq_x10 = 0;
     if(g_system_state.current_mode == MODE_FIXED_FREQUENCY) {
-        freq_x10 = (uint16_t)(g_system_state.target_frequency_hz * 10);  // ✅ ИСПРАВЛЕНО!
+        freq_x10 = (uint16_t)(g_system_state.target_frequency_mhz / 200);
     }
     status_data[2] = freq_x10 & 0xFF;
     status_data[3] = (freq_x10 >> 8) & 0xFF;
     
-    // Bytes 4-5: Reserved
+    // Байт 4: Флаги (бит 1 = Hi-Z active)
     status_data[4] = 0;
+    
+    // Байт 5: Reserved
     status_data[5] = 0;
     
-    // Bytes 6-7: Uptime seconds
+    // Байты 6-7: Uptime seconds (uint16_t LE)
     uint32_t uptime = system_get_uptime_seconds();
     if(uptime > 65535) uptime = 65535;
     status_data[6] = uptime & 0xFF;
@@ -288,9 +316,6 @@ void calculate_optimal_psc_arr_16bit(float freq_hz, uint16_t *psc, uint16_t *arr
     *psc = best_psc;
     *arr = best_arr;
 }
-
-
-
 
 // ============================================
 // ОТПРАВКА ОШИБКИ

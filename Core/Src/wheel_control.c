@@ -29,16 +29,34 @@ enum {
 
 // ==================== ВСПОМОГАТЕЛЬНЫЕ ФУНКЦИИ ====================
 
+/*
+ * ФИЗИЧЕСКАЯ ЛОГИКА:
+ *   ABS датчик: 48 зубьев × 2 импульса/зуб = 96 импульсов/оборот
+ *   f_signal_Hz  = raw_RPM × 0.032          (выход GPIO, TOGGLE ÷2 уже учтён)
+ *   f_timer_Hz   = raw_RPM × 0.064          (частота таймера = f_signal × 2)
+ *   Total_Divider = APB1_CLK / f_timer_Hz
+ *                 = 150 000 000 / (raw × 0.064)
+ *                 = 2 343 750 000 / raw
+ *
+ * ОШИБКА СТАРОГО КОДА: использовал val * 0.02 * MinutTeethFactor = val * 0.032
+ *   => делал APB1_CLK / (val * 0.032 * (PSC+1)) = 4 687 500 000 / (val*(PSC+1))
+ *   => ARR в 2 раза больше => выходная частота в 2 раза ниже требуемой
+ *
+ * ИСПРАВЛЕНИЕ: явная константа 2 343 750 000
+ */
+
+#define TOTAL_DIVIDER_CONST  2343750000ULL   // APB1_CLK / (raw * 0.064)
+
 uint32_t calculete_period_only(int val)
 {
-    // For 32bit timer
-    float factor = 0.02;
-    return (APB1_CLK / (val * factor * MinutTeethFactor * (12 + 1))) - 1;  // значение регистра ARR
+    // For 32-bit TIM2 (PSC = 12 fixed)
+    // ARR = Total_Divider / (PSC + 1) - 1 = 2343750000 / (val * 13) - 1
+    uint64_t total_divider = TOTAL_DIVIDER_CONST / (uint32_t)val;
+    return (uint32_t)(total_divider / (12 + 1)) - 1;
 }
 
 int calculete_prsc_and_perio(int val, int *arr, int wheelnum)
 {
-    float factor = 0.02;
     int newpresc;
 
     if (val < 4274) {
@@ -60,19 +78,24 @@ int calculete_prsc_and_perio(int val, int *arr, int wheelnum)
 
     arr[1] = newpresc;
 
+    // FIX: используем корректную константу Total_Divider = 2 343 750 000 / val
+    // Старый код: APB1_CLK / (val * 0.02 * MinutTeethFactor * (PSC+1)) давал
+    //   Total_Divider / (PSC+1) с константой 4 687 500 000 — в 2 раза больше нужной.
+    uint64_t total_divider = TOTAL_DIVIDER_CONST / (uint32_t)val;
+
     uint32_t tmp;
-    tmp = (APB1_CLK / (val * factor * MinutTeethFactor * (arr[0] + 1))) - 1;  // значение регистра ARR
-    
-    if (tmp > 65536) {
+    tmp = (uint32_t)(total_divider / (uint32_t)(arr[0] + 1)) - 1;
+
+    if (tmp > 65535) {
         tmp = 65535;  // обрезаем. Хоть это и не правильно
     }
-    
-    arr[2] = (int)tmp;
-    
-    if (arr[0] != arr[1]) {
-        tmp = ((APB1_CLK / (val * factor * MinutTeethFactor * (newpresc + 1))) - 1);  // значение регистра ARR
 
-        if (tmp > 65536) {
+    arr[2] = (int)tmp;
+
+    if (arr[0] != arr[1]) {
+        tmp = (uint32_t)(total_divider / (uint32_t)(newpresc + 1)) - 1;
+
+        if (tmp > 65535) {
             tmp = 65535;  // обрезаем. Хоть это и не правильно.
         }
 
