@@ -179,6 +179,7 @@ void system_switch_mode(operation_mode_t new_mode)
             }
             if(g_system_state.channel_mask & 0x02) {
                 printf("[SYSTEM] TIM2 (FR) ENABLED\n");
+                TIM2->PSC = 12;  // ← восстановить RPM prescaler
                 TIM2->CR1 |= TIM_CR1_CEN;
                 TIM2->CCER |= TIM_CCER_CC1E;  // Включить выход
             }
@@ -198,17 +199,28 @@ void system_switch_mode(operation_mode_t new_mode)
             printf("[SYSTEM] FIXED MODE: Frequency = %lu Hz\n", g_system_state.target_frequency_hz);
             printf("[SYSTEM] LED: Constant blink 500ms\n");
             
-            // Запустить все таймеры на фиксированной частоте
-            TIM1->CR1 |= TIM_CR1_CEN;
-            TIM2->CR1 |= TIM_CR1_CEN;
-            TIM3->CR1 |= TIM_CR1_CEN;
-            TIM4->CR1 |= TIM_CR1_CEN;
-            
-            // Включить выходы
-            TIM1->CCER |= TIM_CCER_CC1E;
-            TIM2->CCER |= TIM_CCER_CC1E;
-            TIM3->CCER |= TIM_CCER_CC1E;
-            TIM4->CCER |= TIM_CCER_CC1E;
+            if(g_system_state.channel_mask == 0x02) {
+                // ONLY_FR: только TIM2
+                printf("[SYSTEM] ONLY_FR: TIM2 enabled, TIM1/3/4 stopped\n");
+                TIM2->CR1 |= TIM_CR1_CEN;
+
+                // Включить выходы
+                TIM2->CCER |= TIM_CCER_CC1E;
+                // TIM1/3/4 уже остановлены в секции "ВЫХОД ИЗ СТАРОГО РЕЖИМА"
+            } else if(g_system_state.channel_mask == 0x0F) {
+                // ALL_FOUR: все четыре
+                printf("[SYSTEM] ALL_FOUR: all timers enabled\n");
+                TIM1->CR1 |= TIM_CR1_CEN;
+                TIM2->CR1 |= TIM_CR1_CEN;
+                TIM3->CR1 |= TIM_CR1_CEN;
+                TIM4->CR1 |= TIM_CR1_CEN;
+                
+                // Включить выходы
+                TIM1->CCER |= TIM_CCER_CC1E;
+                TIM2->CCER |= TIM_CCER_CC1E;
+                TIM3->CCER |= TIM_CCER_CC1E;
+                TIM4->CCER |= TIM_CCER_CC1E;
+            }
             break;
         
         case MODE_EXTERNAL_SIGNAL:
