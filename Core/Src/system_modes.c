@@ -276,20 +276,6 @@ uint32_t system_get_uptime_seconds(void)
 // LED ИНДИКАЦИЯ
 // ============================================
 
-static void led_blink_pattern(uint32_t current_time, uint32_t interval_ms)
-{
-    if(current_time - g_system_state.led_last_toggle_time >= interval_ms) {
-        g_system_state.led_state = !g_system_state.led_state;
-        g_system_state.led_last_toggle_time = current_time;
-        
-        if(g_system_state.led_state) {
-            HAL_GPIO_WritePin(GPIOA, GPIO_PIN_1, GPIO_PIN_RESET);  // LED ON
-        } else {
-            HAL_GPIO_WritePin(GPIOA, GPIO_PIN_1, GPIO_PIN_SET);    // LED OFF
-        }
-    }
-}
-
 void update_system_indicators(void)
 {
     static uint32_t last_update = 0;
