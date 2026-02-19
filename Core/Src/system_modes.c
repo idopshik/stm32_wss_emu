@@ -1,10 +1,9 @@
 /**
- * system_modes.c - VERSION 4.3 (FIXED BOOT ISSUE)
+ * system_modes.c - VERSION 4.4 (CHANNEL MASK + PSC RESTORE)
  * 
- * Исправления:
- * - В MODE_BOOT теперь разрешаем обработку CAN 0x003
- * - При переходе в RPM режим правильно запускаем таймеры согласно маске
- * - Улучшена логика обработки состояний
+ * Исправления v4.4:
+ * - MODE_RPM_DYNAMIC: восстановление TIM2->PSC = 12 при входе в режим
+ * - MODE_FIXED_FREQUENCY: учёт channel_mask (ONLY_FR vs ALL_FOUR)
  */
 
 #include <stdio.h>
@@ -179,7 +178,11 @@ void system_switch_mode(operation_mode_t new_mode)
             }
             if(g_system_state.channel_mask & 0x02) {
                 printf("[SYSTEM] TIM2 (FR) ENABLED\n");
-                TIM2->PSC = 12;  // ← восстановить RPM prescaler
+                // ✅ FIX v4.4: ВОССТАНОВИТЬ PSC=12 для RPM режима
+                // FIXED мог поставить PSC=0 для максимальной точности,
+                // но calculete_period_only() жёстко предполагает PSC=12
+                TIM2->PSC = 12;
+                printf("[SYSTEM] TIM2 PSC restored to 12 (RPM requirement)\n");
                 TIM2->CR1 |= TIM_CR1_CEN;
                 TIM2->CCER |= TIM_CCER_CC1E;  // Включить выход
             }
@@ -196,30 +199,36 @@ void system_switch_mode(operation_mode_t new_mode)
             break;
         
         case MODE_FIXED_FREQUENCY:
-            printf("[SYSTEM] FIXED MODE: Frequency = %lu Hz\n", g_system_state.target_frequency_hz);
+            printf("[SYSTEM] FIXED MODE: Frequency = %lu Hz (timer)\n", 
+                   g_system_state.target_frequency_hz);
+            printf("[SYSTEM] Output frequency = %lu Hz\n",
+                   g_system_state.target_frequency_hz / 2);
             printf("[SYSTEM] LED: Constant blink 500ms\n");
             
+            // ✅ FIX v4.4: Учёт channel_mask
             if(g_system_state.channel_mask == 0x02) {
-                // ONLY_FR: только TIM2
+                // ---- ONLY_FR: только TIM2 ----
                 printf("[SYSTEM] ONLY_FR: TIM2 enabled, TIM1/3/4 stopped\n");
                 TIM2->CR1 |= TIM_CR1_CEN;
-
-                // Включить выходы
                 TIM2->CCER |= TIM_CCER_CC1E;
                 // TIM1/3/4 уже остановлены в секции "ВЫХОД ИЗ СТАРОГО РЕЖИМА"
+                
             } else if(g_system_state.channel_mask == 0x0F) {
-                // ALL_FOUR: все четыре
+                // ---- ALL_FOUR: все четыре таймера ----
                 printf("[SYSTEM] ALL_FOUR: all timers enabled\n");
                 TIM1->CR1 |= TIM_CR1_CEN;
                 TIM2->CR1 |= TIM_CR1_CEN;
                 TIM3->CR1 |= TIM_CR1_CEN;
                 TIM4->CR1 |= TIM_CR1_CEN;
                 
-                // Включить выходы
                 TIM1->CCER |= TIM_CCER_CC1E;
                 TIM2->CCER |= TIM_CCER_CC1E;
                 TIM3->CCER |= TIM_CCER_CC1E;
                 TIM4->CCER |= TIM_CCER_CC1E;
+                
+            } else {
+                printf("[SYSTEM WARNING] Unexpected channel_mask: 0x%02X\n",
+                       g_system_state.channel_mask);
             }
             break;
         
@@ -244,12 +253,6 @@ void system_switch_mode(operation_mode_t new_mode)
             
             GPIO_InitStruct.Pin = GPIO_PIN_9;   // RR (PB9)
             HAL_GPIO_Init(GPIOB, &GPIO_InitStruct);
-            
-            // Очистить AFR
-            /* GPIOA->AFR[0] = 0; */
-            /* GPIOA->AFR[1] = 0; */
-            /* GPIOB->AFR[0] = 0; */
-            /* GPIOB->AFR[1] = 0; */
             
             // ✅ ВКЛЮЧИТЬ SSR для питания оптопары
             HAL_GPIO_WritePin(GPIOB, GPIO_PIN_10, GPIO_PIN_SET);  // PB10 = HIGH
