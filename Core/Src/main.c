@@ -29,7 +29,7 @@
 
 #include "system_modes.h"
 #include "can_commands.h"
-#include "wheel_control.h"
+#include "wss_dds.h"
 #include "can_handler.h"
 
 /* USER CODE END Includes */
@@ -55,7 +55,6 @@ uint8_t can_active_receiving = 0;
 
 /* USER CODE END PTD */
 
-
 /* Private define ------------------------------------------------------------*/
 /* USER CODE BEGIN PD */
 
@@ -69,10 +68,6 @@ uint8_t can_active_receiving = 0;
 /* Private variables ---------------------------------------------------------*/
 FDCAN_HandleTypeDef hfdcan1;
 
-TIM_HandleTypeDef htim1;
-TIM_HandleTypeDef htim2;
-TIM_HandleTypeDef htim3;
-TIM_HandleTypeDef htim4;
 TIM_HandleTypeDef htim6;
 TIM_HandleTypeDef htim8;
 
@@ -86,10 +81,6 @@ UART_HandleTypeDef huart1;
 void SystemClock_Config(void);
 static void MX_GPIO_Init(void);
 static void MX_FDCAN1_Init(void);
-static void MX_TIM1_Init(void);
-static void MX_TIM2_Init(void);
-static void MX_TIM3_Init(void);
-static void MX_TIM4_Init(void);
 static void MX_TIM6_Init(void);
 static void MX_TIM8_Init(void);
 static void MX_USART1_UART_Init(void);
@@ -190,10 +181,6 @@ int main(void)
   /* Initialize all configured peripherals */
   MX_GPIO_Init();
   MX_FDCAN1_Init();
-  MX_TIM1_Init();
-  MX_TIM2_Init();
-  MX_TIM3_Init();
-  MX_TIM4_Init();
   MX_TIM6_Init();
   MX_TIM8_Init();
   MX_USART1_UART_Init();
@@ -202,110 +189,52 @@ int main(void)
     can_handler_init();
 
 
-    // Start four timers (as in previous code version)
-    HAL_TIM_Base_Start_IT(&htim1);
-    HAL_TIM_Base_Start_IT(&htim2);
-    HAL_TIM_Base_Start_IT(&htim3);
-    HAL_TIM_Base_Start_IT(&htim4);
-    HAL_TIM_Base_Start_IT(&htim6);
-    HAL_TIM_Base_Start_IT(&htim8);
+  can_handler_init();
 
-    HAL_TIM_OC_Start_IT(&htim2, TIM_CHANNEL_1);
+  // ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ (ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ wss_dds_init)
+  system_init_modes();
 
-  /* NOTE: PA15 (TIM2 CH1/FR channel) GPIO configuration is handled in hal_msp.c
-   * in HAL_TIM_MspPostInit() callback and is configured as GPIO_MODE_AF_OD
-   * (Alternate Function Open-Drain) for 5V external pull-up compatibility.
-   * See stm32g4xx_hal_msp.c for details.
-   */
+  my_printf("[ INFO ] WSS Emulator v4.5 (DDS)\n");
+  printf("[ INFO ] SWV: Program start\n");
 
-    my_printf("[ INFO ] my_printf Program start now\n");
-    printf("[ INFO ] SWV: Program start now\n");
+/* USER CODE END 2 */
 
+/* Infinite loop */
+/* USER CODE BEGIN WHILE */
 
-    // Initialize system operation modes
-    system_init_modes();
+while (1)
+{
+  /* USER CODE END WHILE */
 
-    // Initialize wheel control subsystem
-    wheel_control_init();
+  /* USER CODE BEGIN 3 */
 
-    set_new_speeds(500, 500, 500, 500);
+  // ï¿½ ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½: ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ DDS process ï¿½ï¿½ï¿½ ï¿½ï¿½ï¿½ï¿½ï¿½ ï¿½ï¿½ï¿½ï¿½
+  wss_dds_process();
 
+  // ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ CAN ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ ï¿½ RPM ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½
+  can_process_in_main();
+  
+  // LED ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ ï¿½ï¿½ ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½
+  update_system_indicators();
 
-
-    // Test 1: Zero speeds
-
-    /* set_new_speeds(500, 500, 500, 500); */
-    /* HAL_Delay(1000); */
-
-    // Test 2: Medium speeds
-    /* set_new_speeds(1000, 10000, 1000, 1000); */
-    /* HAL_Delay(1000); */
-
-    // Test 3: High speeds (prescaler switching)
-    /* set_new_speeds(5000, 50000, 5000, 5000); */
-    /* HAL_Delay(1000); */
-
-    // Test 4: Different speeds for each wheel
-    /* set_new_speeds(1000, 20000, 3000, 4000); */
-    /* HAL_Delay(1000); */
-    
-    // Now can call without passing whl_arr
-    /* set_new_speeds(10, 10, 10, 10); */
-
-    HAL_GPIO_WritePin(GPIOA, EXT_LED_Pin, GPIO_PIN_SET);
-
-
-    // Transition to Hi-Z mode after initialization
-    /* enter_hi_impedance_mode(); */
-
-    // dirty hack
-    /* g_system_state.current_mode = MODE_RPM_DYNAMIC; */
-
-
-
-
-
-
-
-  /* USER CODE END 2 */
-
-  /* Infinite loop */
-  /* USER CODE BEGIN WHILE */
-  while (1)
-  {
-    /* USER CODE END WHILE */
-
-    /* USER CODE BEGIN 3 */
-
-
-
-    //#####  ALIVE SHOW logic ######
-    static uint32_t last_blink_time = 0;
-    uint32_t current_time = HAL_GetTick();
-    
-    // Blue LED blink every 500ms
-    if (current_time - last_blink_time >= 500) {
-        last_blink_time = current_time;
-        HAL_GPIO_TogglePin(GPIOC, GPIO_PIN_6);  // PC6 - LED_Blue
-    }
-    // main cycle alive_out to logic analyzer
-    if (ms100Flag > 0) {
-        ms100Flag = 0;
-        HAL_GPIO_TogglePin(GPIOB, Out_1_Pin);
-    }
-
-
-    // ¿ LED INDICATION BY MODE
-    update_system_indicators();
-
-
-    // Process RPM data from CAN
-    can_process_in_main();
-    
-    HAL_Delay(1);
-
-
+  // Alive indicator (blue LED blink)
+  static uint32_t last_blink_time = 0;
+  uint32_t current_time = HAL_GetTick();
+  
+  if (current_time - last_blink_time >= 500) {
+      last_blink_time = current_time;
+      HAL_GPIO_TogglePin(GPIOC, GPIO_PIN_6);  // PC6 - LED_Blue
   }
+  
+  // Main cycle alive pulse for logic analyzer
+  static uint32_t last_alive = 0;
+  if (HAL_GetTick() - last_alive >= 100) {
+      last_alive = HAL_GetTick();
+      HAL_GPIO_TogglePin(GPIOB, Out_1_Pin); // Out_1_Pin
+  }
+
+  HAL_Delay(1);  // ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ ï¿½ï¿½ï¿½ stability
+}
   /* USER CODE END 3 */
 }
 
@@ -320,7 +249,7 @@ void SystemClock_Config(void)
 
   /** Configure the main internal regulator output voltage
   */
-  HAL_PWREx_ControlVoltageScaling(PWR_REGULATOR_VOLTAGE_SCALE1);
+  HAL_PWREx_ControlVoltageScaling(PWR_REGULATOR_VOLTAGE_SCALE1_BOOST);
 
   /** Initializes the RCC Oscillators according to the specified parameters
   * in the RCC_OscInitTypeDef structure.
@@ -330,7 +259,7 @@ void SystemClock_Config(void)
   RCC_OscInitStruct.PLL.PLLState = RCC_PLL_ON;
   RCC_OscInitStruct.PLL.PLLSource = RCC_PLLSOURCE_HSE;
   RCC_OscInitStruct.PLL.PLLM = RCC_PLLM_DIV2;
-  RCC_OscInitStruct.PLL.PLLN = 75;
+  RCC_OscInitStruct.PLL.PLLN = 85;
   RCC_OscInitStruct.PLL.PLLP = RCC_PLLP_DIV2;
   RCC_OscInitStruct.PLL.PLLQ = RCC_PLLQ_DIV2;
   RCC_OscInitStruct.PLL.PLLR = RCC_PLLR_DIV2;
@@ -394,202 +323,6 @@ static void MX_FDCAN1_Init(void)
   /* USER CODE BEGIN FDCAN1_Init 2 */
 
   /* USER CODE END FDCAN1_Init 2 */
-
-}
-
-/**
-  * @brief TIM1 Initialization Function
-  * @param None
-  * @retval None
-  */
-static void MX_TIM1_Init(void)
-{
-
-  /* USER CODE BEGIN TIM1_Init 0 */
-
-  /* USER CODE END TIM1_Init 0 */
-
-  TIM_ClockConfigTypeDef sClockSourceConfig = {0};
-  TIM_MasterConfigTypeDef sMasterConfig = {0};
-
-  /* USER CODE BEGIN TIM1_Init 1 */
-
-  /* USER CODE END TIM1_Init 1 */
-  htim1.Instance = TIM1;
-  htim1.Init.Prescaler = 2000-1;
-  htim1.Init.CounterMode = TIM_COUNTERMODE_UP;
-  htim1.Init.Period = 59999;
-  htim1.Init.ClockDivision = TIM_CLOCKDIVISION_DIV1;
-  htim1.Init.RepetitionCounter = 0;
-  htim1.Init.AutoReloadPreload = TIM_AUTORELOAD_PRELOAD_DISABLE;
-  if (HAL_TIM_Base_Init(&htim1) != HAL_OK)
-  {
-    Error_Handler();
-  }
-  sClockSourceConfig.ClockSource = TIM_CLOCKSOURCE_INTERNAL;
-  if (HAL_TIM_ConfigClockSource(&htim1, &sClockSourceConfig) != HAL_OK)
-  {
-    Error_Handler();
-  }
-  sMasterConfig.MasterOutputTrigger = TIM_TRGO_RESET;
-  sMasterConfig.MasterOutputTrigger2 = TIM_TRGO2_RESET;
-  sMasterConfig.MasterSlaveMode = TIM_MASTERSLAVEMODE_DISABLE;
-  if (HAL_TIMEx_MasterConfigSynchronization(&htim1, &sMasterConfig) != HAL_OK)
-  {
-    Error_Handler();
-  }
-  /* USER CODE BEGIN TIM1_Init 2 */
-
-  /* USER CODE END TIM1_Init 2 */
-
-}
-
-/**
-  * @brief TIM2 Initialization Function
-  * @param None
-  * @retval None
-  */
-static void MX_TIM2_Init(void)
-{
-
-  /* USER CODE BEGIN TIM2_Init 0 */
-
-  /* USER CODE END TIM2_Init 0 */
-
-  TIM_ClockConfigTypeDef sClockSourceConfig = {0};
-  TIM_MasterConfigTypeDef sMasterConfig = {0};
-  TIM_OC_InitTypeDef sConfigOC = {0};
-
-  /* USER CODE BEGIN TIM2_Init 1 */
-
-  /* USER CODE END TIM2_Init 1 */
-  htim2.Instance = TIM2;
-  htim2.Init.Prescaler = 12;
-  htim2.Init.CounterMode = TIM_COUNTERMODE_UP;
-  htim2.Init.Period = 600000;
-  htim2.Init.ClockDivision = TIM_CLOCKDIVISION_DIV1;
-  htim2.Init.AutoReloadPreload = TIM_AUTORELOAD_PRELOAD_DISABLE;
-  if (HAL_TIM_Base_Init(&htim2) != HAL_OK)
-  {
-    Error_Handler();
-  }
-  sClockSourceConfig.ClockSource = TIM_CLOCKSOURCE_INTERNAL;
-  if (HAL_TIM_ConfigClockSource(&htim2, &sClockSourceConfig) != HAL_OK)
-  {
-    Error_Handler();
-  }
-  if (HAL_TIM_OC_Init(&htim2) != HAL_OK)
-  {
-    Error_Handler();
-  }
-  sMasterConfig.MasterOutputTrigger = TIM_TRGO_RESET;
-  sMasterConfig.MasterSlaveMode = TIM_MASTERSLAVEMODE_DISABLE;
-  if (HAL_TIMEx_MasterConfigSynchronization(&htim2, &sMasterConfig) != HAL_OK)
-  {
-    Error_Handler();
-  }
-  sConfigOC.OCMode = TIM_OCMODE_TOGGLE;
-  sConfigOC.Pulse = 0;
-  sConfigOC.OCPolarity = TIM_OCPOLARITY_HIGH;
-  sConfigOC.OCFastMode = TIM_OCFAST_DISABLE;
-  if (HAL_TIM_OC_ConfigChannel(&htim2, &sConfigOC, TIM_CHANNEL_1) != HAL_OK)
-  {
-    Error_Handler();
-  }
-  /* USER CODE BEGIN TIM2_Init 2 */
-
-  /* USER CODE END TIM2_Init 2 */
-  HAL_TIM_MspPostInit(&htim2);
-
-}
-
-/**
-  * @brief TIM3 Initialization Function
-  * @param None
-  * @retval None
-  */
-static void MX_TIM3_Init(void)
-{
-
-  /* USER CODE BEGIN TIM3_Init 0 */
-
-  /* USER CODE END TIM3_Init 0 */
-
-  TIM_ClockConfigTypeDef sClockSourceConfig = {0};
-  TIM_MasterConfigTypeDef sMasterConfig = {0};
-
-  /* USER CODE BEGIN TIM3_Init 1 */
-
-  /* USER CODE END TIM3_Init 1 */
-  htim3.Instance = TIM3;
-  htim3.Init.Prescaler = 2000-1;
-  htim3.Init.CounterMode = TIM_COUNTERMODE_UP;
-  htim3.Init.Period = 59999;
-  htim3.Init.ClockDivision = TIM_CLOCKDIVISION_DIV1;
-  htim3.Init.AutoReloadPreload = TIM_AUTORELOAD_PRELOAD_DISABLE;
-  if (HAL_TIM_Base_Init(&htim3) != HAL_OK)
-  {
-    Error_Handler();
-  }
-  sClockSourceConfig.ClockSource = TIM_CLOCKSOURCE_INTERNAL;
-  if (HAL_TIM_ConfigClockSource(&htim3, &sClockSourceConfig) != HAL_OK)
-  {
-    Error_Handler();
-  }
-  sMasterConfig.MasterOutputTrigger = TIM_TRGO_RESET;
-  sMasterConfig.MasterSlaveMode = TIM_MASTERSLAVEMODE_DISABLE;
-  if (HAL_TIMEx_MasterConfigSynchronization(&htim3, &sMasterConfig) != HAL_OK)
-  {
-    Error_Handler();
-  }
-  /* USER CODE BEGIN TIM3_Init 2 */
-
-  /* USER CODE END TIM3_Init 2 */
-
-}
-
-/**
-  * @brief TIM4 Initialization Function
-  * @param None
-  * @retval None
-  */
-static void MX_TIM4_Init(void)
-{
-
-  /* USER CODE BEGIN TIM4_Init 0 */
-
-  /* USER CODE END TIM4_Init 0 */
-
-  TIM_ClockConfigTypeDef sClockSourceConfig = {0};
-  TIM_MasterConfigTypeDef sMasterConfig = {0};
-
-  /* USER CODE BEGIN TIM4_Init 1 */
-
-  /* USER CODE END TIM4_Init 1 */
-  htim4.Instance = TIM4;
-  htim4.Init.Prescaler = 2000-1;
-  htim4.Init.CounterMode = TIM_COUNTERMODE_UP;
-  htim4.Init.Period = 59999;
-  htim4.Init.ClockDivision = TIM_CLOCKDIVISION_DIV1;
-  htim4.Init.AutoReloadPreload = TIM_AUTORELOAD_PRELOAD_DISABLE;
-  if (HAL_TIM_Base_Init(&htim4) != HAL_OK)
-  {
-    Error_Handler();
-  }
-  sClockSourceConfig.ClockSource = TIM_CLOCKSOURCE_INTERNAL;
-  if (HAL_TIM_ConfigClockSource(&htim4, &sClockSourceConfig) != HAL_OK)
-  {
-    Error_Handler();
-  }
-  sMasterConfig.MasterOutputTrigger = TIM_TRGO_RESET;
-  sMasterConfig.MasterSlaveMode = TIM_MASTERSLAVEMODE_DISABLE;
-  if (HAL_TIMEx_MasterConfigSynchronization(&htim4, &sMasterConfig) != HAL_OK)
-  {
-    Error_Handler();
-  }
-  /* USER CODE BEGIN TIM4_Init 2 */
-
-  /* USER CODE END TIM4_Init 2 */
 
 }
 
@@ -744,13 +477,14 @@ static void MX_GPIO_Init(void)
   __HAL_RCC_GPIOB_CLK_ENABLE();
 
   /*Configure GPIO pin Output Level */
-  HAL_GPIO_WritePin(GPIOA, EXT_LED_Pin|tim3_out_Pin|tim1_out_Pin, GPIO_PIN_RESET);
+  HAL_GPIO_WritePin(GPIOA, wss_RL_Pin|EXT_LED_Pin|wss_RR_Pin|wss_FL_Pin
+                          |wss_FR_Pin, GPIO_PIN_RESET);
+
+  /*Configure GPIO pin Output Level */
+  HAL_GPIO_WritePin(GPIOB, SSR_Pin|Out_1_Pin|Out_2_Pin, GPIO_PIN_RESET);
 
   /*Configure GPIO pin Output Level */
   HAL_GPIO_WritePin(LED_Blue_GPIO_Port, LED_Blue_Pin, GPIO_PIN_RESET);
-
-  /*Configure GPIO pin Output Level */
-  HAL_GPIO_WritePin(GPIOB, GPIO_PIN_10|Out_1_Pin|Out_2_Pin|tim4_out_Pin, GPIO_PIN_RESET);
 
   /*Configure GPIO pin : User_Button_Pin */
   GPIO_InitStruct.Pin = User_Button_Pin;
@@ -758,32 +492,26 @@ static void MX_GPIO_Init(void)
   GPIO_InitStruct.Pull = GPIO_NOPULL;
   HAL_GPIO_Init(User_Button_GPIO_Port, &GPIO_InitStruct);
 
-  /* Configure GPIO pin EXT_LED_Pin (PA1) as open-drain output.
-   * EXT_LED is powered externally from 5V via pull-up resistor.
-   * Open-drain (OD) mode allows the GPIO to pull the line low (sink current)
-   * while allowing the external 5V pull-up resistor to bring it high.
-   * This configuration protects the GPIO pin from 5V overvoltage exposure.
-   *
-   * NOTE: Similar open-drain configuration will be applied to PA15 (TIM2 CH1/FR)
-   * when external 5V level-shifting is required.
-   */
+  /*Configure GPIO pins : wss_RL_Pin wss_RR_Pin wss_FL_Pin wss_FR_Pin */
+  GPIO_InitStruct.Pin = wss_RL_Pin|wss_RR_Pin|wss_FL_Pin|wss_FR_Pin;
+  GPIO_InitStruct.Mode = GPIO_MODE_OUTPUT_PP;
+  GPIO_InitStruct.Pull = GPIO_NOPULL;
+  GPIO_InitStruct.Speed = GPIO_SPEED_FREQ_VERY_HIGH;
+  HAL_GPIO_Init(GPIOA, &GPIO_InitStruct);
+
+  /*Configure GPIO pin : EXT_LED_Pin */
   GPIO_InitStruct.Pin = EXT_LED_Pin;
   GPIO_InitStruct.Mode = GPIO_MODE_OUTPUT_OD;
   GPIO_InitStruct.Pull = GPIO_NOPULL;
   GPIO_InitStruct.Speed = GPIO_SPEED_FREQ_LOW;
   HAL_GPIO_Init(EXT_LED_GPIO_Port, &GPIO_InitStruct);
 
-  /* Configure GPIO pins tim3_out_Pin and tim1_out_Pin as push-pull outputs.
-   * These are standard 3.3V signal outputs for wheel speed sensor emulation
-   * on the FL (Front Left) and RL (Rear Left) channels respectively.
-   * Push-pull mode actively drives the output both high and low,
-   * suitable for logic-level signals.
-   */
-  GPIO_InitStruct.Pin = tim3_out_Pin|tim1_out_Pin;
+  /*Configure GPIO pins : SSR_Pin Out_1_Pin Out_2_Pin */
+  GPIO_InitStruct.Pin = SSR_Pin|Out_1_Pin|Out_2_Pin;
   GPIO_InitStruct.Mode = GPIO_MODE_OUTPUT_PP;
   GPIO_InitStruct.Pull = GPIO_NOPULL;
   GPIO_InitStruct.Speed = GPIO_SPEED_FREQ_LOW;
-  HAL_GPIO_Init(GPIOA, &GPIO_InitStruct);
+  HAL_GPIO_Init(GPIOB, &GPIO_InitStruct);
 
   /*Configure GPIO pin : LED_Blue_Pin */
   GPIO_InitStruct.Pin = LED_Blue_Pin;
@@ -791,13 +519,6 @@ static void MX_GPIO_Init(void)
   GPIO_InitStruct.Pull = GPIO_NOPULL;
   GPIO_InitStruct.Speed = GPIO_SPEED_FREQ_LOW;
   HAL_GPIO_Init(LED_Blue_GPIO_Port, &GPIO_InitStruct);
-
-  /*Configure GPIO pins : PB10 Out_1_Pin Out_2_Pin tim4_out_Pin */
-  GPIO_InitStruct.Pin = GPIO_PIN_10|Out_1_Pin|Out_2_Pin|tim4_out_Pin;
-  GPIO_InitStruct.Mode = GPIO_MODE_OUTPUT_PP;
-  GPIO_InitStruct.Pull = GPIO_NOPULL;
-  GPIO_InitStruct.Speed = GPIO_SPEED_FREQ_LOW;
-  HAL_GPIO_Init(GPIOB, &GPIO_InitStruct);
 
 /* USER CODE BEGIN MX_GPIO_Init_2 */
 /* USER CODE END MX_GPIO_Init_2 */
@@ -811,13 +532,13 @@ void HAL_TIM_PeriodElapsedCallback(TIM_HandleTypeDef *htim)
         ms100Flag = 1;
     }
     if (htim->Instance == TIM1) {
-        HAL_GPIO_TogglePin(GPIOA, tim1_out_Pin);
+        HAL_GPIO_TogglePin(GPIOA, wss_FL_Pin);
     }
     else if (htim->Instance == TIM3) {
-        HAL_GPIO_TogglePin(GPIOA, tim3_out_Pin);
+        HAL_GPIO_TogglePin(GPIOA, wss_RL_Pin);
     }
     else if (htim->Instance == TIM4) {
-        HAL_GPIO_TogglePin(GPIOB, tim4_out_Pin);
+        HAL_GPIO_TogglePin(GPIOA, wss_RR_Pin);
     }
 }
 

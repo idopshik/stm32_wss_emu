@@ -49,8 +49,6 @@ extern "C" {
 
 /* USER CODE END EM */
 
-void HAL_TIM_MspPostInit(TIM_HandleTypeDef *htim);
-
 /* Exported functions prototypes ---------------------------------------------*/
 void Error_Handler(void);
 
@@ -61,20 +59,24 @@ void Error_Handler(void);
 /* Private defines -----------------------------------------------------------*/
 #define User_Button_Pin GPIO_PIN_13
 #define User_Button_GPIO_Port GPIOC
+#define wss_RL_Pin GPIO_PIN_0
+#define wss_RL_GPIO_Port GPIOA
 #define EXT_LED_Pin GPIO_PIN_1
 #define EXT_LED_GPIO_Port GPIOA
-#define tim3_out_Pin GPIO_PIN_6
-#define tim3_out_GPIO_Port GPIOA
+#define wss_RR_Pin GPIO_PIN_6
+#define wss_RR_GPIO_Port GPIOA
+#define SSR_Pin GPIO_PIN_10
+#define SSR_GPIO_Port GPIOB
 #define LED_Blue_Pin GPIO_PIN_6
 #define LED_Blue_GPIO_Port GPIOC
-#define tim1_out_Pin GPIO_PIN_8
-#define tim1_out_GPIO_Port GPIOA
+#define wss_FL_Pin GPIO_PIN_8
+#define wss_FL_GPIO_Port GPIOA
+#define wss_FR_Pin GPIO_PIN_15
+#define wss_FR_GPIO_Port GPIOA
 #define Out_1_Pin GPIO_PIN_6
 #define Out_1_GPIO_Port GPIOB
 #define Out_2_Pin GPIO_PIN_7
 #define Out_2_GPIO_Port GPIOB
-#define tim4_out_Pin GPIO_PIN_9
-#define tim4_out_GPIO_Port GPIOB
 
 /* USER CODE BEGIN Private defines */
 
